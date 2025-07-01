@@ -63,19 +63,24 @@ class TransferUpdate(BaseModel):
     crypto_tx_hash: Optional[str] = None
     confirmation_count: Optional[int] = None
     processing_notes: Optional[str] = None
-    
+    admin_remarks: Optional[str] = None
+    internal_notes: Optional[str] = None
+
     @validator('status')
     def validate_status(cls, v):
-        if v and v not in ['pending', 'processing', 'completed', 'failed', 'cancelled']:
+        if v and v not in ['pending', 'processing', 'on_hold', 'completed', 'failed', 'cancelled']:
             raise ValueError('Invalid status')
         return v
 
 
-class TransferResponse(TransferBase):
+class TransferResponse(BaseModel):
     id: UUID
     transfer_id: str
     user_id: UUID
+    type: str = Field(alias="type_")  # Map from type_ field in the model
     transfer_type: str
+    amount: Decimal
+    currency: str = "USDT"
     fee: Decimal
     fee_amount: Decimal
     net_amount: Decimal
@@ -95,6 +100,9 @@ class TransferResponse(TransferBase):
     processed_by: Optional[UUID] = None
     processing_notes: Optional[str] = None
     notes: Optional[str] = None
+    admin_remarks: Optional[str] = None
+    internal_notes: Optional[str] = None
+    status_history: Optional[List[Dict[str, Any]]] = None
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None

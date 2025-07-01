@@ -17,7 +17,7 @@ class TransferRequest(Base):
     
     # Transfer Details
     transfer_type = Column(String(20), nullable=False)  # crypto-to-fiat, fiat-to-crypto, crypto_purchase, bank_purchase
-    type = Column(String(20), nullable=False)  # crypto-to-fiat, fiat-to-crypto (backward compatibility)
+    type_ = Column("type", String(20), nullable=False)  # crypto-to-fiat, fiat-to-crypto (backward compatibility)
     amount = Column(Numeric(20, 8), nullable=False)
     fee_amount = Column(Numeric(20, 8), nullable=False, default=0)
     fee = Column(Numeric(20, 8), nullable=False)  # backward compatibility
@@ -71,6 +71,9 @@ class TransferRequest(Base):
     processed_by = Column(UUIDType, nullable=True)  # Admin user ID
     processing_notes = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)  # General notes
+    admin_remarks = Column(Text, nullable=True)  # Admin remarks visible to client
+    internal_notes = Column(Text, nullable=True)  # Internal admin notes (not visible to client)
+    status_history = Column(JSON, nullable=True)  # Track status changes with timestamps
     
     # Timestamps
     created_at = Column(
@@ -93,7 +96,7 @@ class TransferRequest(Base):
     admin_bank_account = relationship("AdminBankAccount", foreign_keys=[admin_bank_account_id])
 
     def __repr__(self):
-        return f"<TransferRequest(id='{self.id}', type='{self.type}', amount='{self.amount}', status='{self.status}')>"
+        return f"<TransferRequest(id='{self.id}', type='{self.type_}', amount='{self.amount}', status='{self.status}')>"
     
     @staticmethod
     def utcnow():

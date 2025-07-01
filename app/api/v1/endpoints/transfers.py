@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, or_, desc
+from sqlalchemy import select, func, and_, or_, desc, String
 from sqlalchemy.orm import selectinload
 from typing import List, Optional, Dict, Any
 from uuid import UUID
@@ -24,8 +24,20 @@ from app.schemas.transfer import (
 from app.services.fee_service import FeeService
 from pydantic import BaseModel, Field
 from app.schemas.base import BaseResponse
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+class PaginatedTransfersResponse(BaseModel):
+    transfers: List[TransferResponse]
+    total_count: int
+    page: int
+    page_size: int
+    total_pages: int
+    has_next: bool
+    has_prev: bool
 
 
 class HashVerificationRequest(BaseModel):
@@ -95,7 +107,7 @@ async def create_transfer(
     transfer = TransferRequest(
         user_id=current_user.id,
         transfer_type=transfer_data.type,
-        type=transfer_data.type,  # Backward compatibility
+        type_=transfer_data.type,  # Backward compatibility
         amount=transfer_data.amount,
         fee_amount=fee_amount,
         fee=fee_amount,  # Backward compatibility
@@ -129,6 +141,203 @@ async def create_transfer(
     )
 
 
+# Admin endpoints (must be defined before parameterized routes)
+@router.get("/admin/pending-count", response_model=BaseResponse[dict])
+async def get_pending_count(
+    db: AsyncSession = Depends(get_db),
+    current_admin = Depends(check_admin_permission("can_view_transfers"))
+):
+    """Get count of pending transfers for sidebar badge"""
+    try:
+        # Count pending transfers
+        count_query = select(func.count(TransferRequest.id)).where(TransferRequest.status == 'pending')
+        result = await db.execute(count_query)
+        count = result.scalar() or 0
+        
+        return BaseResponse(
+            success=True,
+            data={
+                "pending_count": count,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error getting pending count: {str(e)}")
+        return BaseResponse(
+            success=False,
+            error="Failed to get pending count"
+        )
+
+@router.get("/admin/stats", response_model=BaseResponse[TransferStats])
+async def get_transfer_stats(
+    db: AsyncSession = Depends(get_db),
+    current_admin = Depends(check_admin_permission("can_view_reports"))
+):
+    """Get transfer statistics (admin only)"""
+    # Get counts by status
+    result = await db.execute(
+        select(
+            func.count(TransferRequest.id).label("total"),
+            func.count().filter(TransferRequest.status == "pending").label("pending"),
+            func.count().filter(TransferRequest.status == "completed").label("completed"),
+            func.count().filter(TransferRequest.status == "failed").label("failed"),
+            func.sum(TransferRequest.amount).label("total_volume"),
+            func.sum(TransferRequest.fee).label("total_fees")
+        )
+    )
+    stats = result.first()
+    
+    transfer_stats = TransferStats(
+        total_requests=stats.total or 0,
+        pending_requests=stats.pending or 0,
+        completed_requests=stats.completed or 0,
+        failed_requests=stats.failed or 0,
+        total_volume=float(stats.total_volume or 0),
+        total_fees=float(stats.total_fees or 0)
+    )
+    
+    return BaseResponse.success_response(data=transfer_stats, message="Transfer statistics retrieved successfully")
+
+@router.get("/admin/all", response_model=BaseResponse[PaginatedTransfersResponse])
+async def get_all_transfers(
+    skip: int = 0,
+    limit: int = 50,
+    type_filter: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    search: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_admin = Depends(check_admin_permission("can_view_transfers"))
+):
+    """Get all transfer requests (admin only)"""
+    base_query = select(TransferRequest).options(selectinload(TransferRequest.user))
+    count_query = select(func.count(TransferRequest.id))
+    
+    # Apply filters to both queries
+    if type_filter:
+        base_query = base_query.where(TransferRequest.type_ == type_filter)
+        count_query = count_query.where(TransferRequest.type_ == type_filter)
+    
+    if status_filter:
+        base_query = base_query.where(TransferRequest.status == status_filter)
+        count_query = count_query.where(TransferRequest.status == status_filter)
+    
+    if search:
+        # Search in user email, transaction hash, or transfer ID
+        search_condition = or_(
+            User.email.ilike(f"%{search}%"),
+            TransferRequest.crypto_tx_hash.ilike(f"%{search}%"),
+            TransferRequest.transfer_id.ilike(f"%{search}%")
+        )
+        base_query = base_query.join(User).where(search_condition)
+        count_query = count_query.join(User).where(search_condition)
+    
+    # Get total count
+    total_result = await db.execute(count_query)
+    total_count = total_result.scalar() or 0
+    
+    # Get transfers with pagination
+    query = base_query.order_by(TransferRequest.created_at.desc()).offset(skip).limit(limit)
+    result = await db.execute(query)
+    transfers = result.scalars().all()
+    
+    # Calculate pagination info
+    page = (skip // limit) + 1
+    total_pages = (total_count + limit - 1) // limit
+    has_next = skip + limit < total_count
+    has_prev = skip > 0
+    
+    response_data = PaginatedTransfersResponse(
+        transfers=transfers,
+        total_count=total_count,
+        page=page,
+        page_size=limit,
+        total_pages=total_pages,
+        has_next=has_next,
+        has_prev=has_prev
+    )
+    
+    return BaseResponse.success_response(data=response_data, message="Transfers retrieved successfully")
+
+@router.get("/admin/{transfer_id}", response_model=BaseResponse[TransferResponse])
+async def get_transfer_by_id(
+    transfer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_admin = Depends(check_admin_permission("can_view_transfers"))
+):
+    """Get transfer by ID (admin only)"""
+    result = await db.execute(
+        select(TransferRequest)
+        .options(selectinload(TransferRequest.user))
+        .where(TransferRequest.id == transfer_id)
+    )
+    transfer = result.scalar_one_or_none()
+
+    if not transfer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transfer not found"
+        )
+
+    return BaseResponse.success_response(data=transfer, message="Transfer retrieved successfully")
+
+@router.put("/admin/{transfer_id}", response_model=BaseResponse[TransferResponse])
+async def update_transfer(
+    transfer_id: UUID,
+    update_data: TransferUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_admin = Depends(check_admin_permission("can_approve_transfers"))
+):
+    """Update transfer request (admin only)"""
+    result = await db.execute(select(TransferRequest).where(TransferRequest.id == transfer_id))
+    transfer = result.scalar_one_or_none()
+
+    if not transfer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transfer not found"
+        )
+
+    # Track status changes for history
+    old_status = transfer.status
+    new_status = update_data.status
+
+    # Update status history if status is changing
+    if new_status and new_status != old_status:
+        # Add status change to history
+        if not transfer.status_history:
+            transfer.status_history = []
+        
+        transfer.status_history.append({
+            "status": new_status,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "changed_by": str(current_admin.id),
+            "message": update_data.status_message or f"Status changed from {old_status} to {new_status}"
+        })
+
+    # Update fields
+    for field, value in update_data.model_dump(exclude_unset=True).items():
+        if hasattr(transfer, field):
+            setattr(transfer, field, value)
+
+    # Set processed_by for status changes
+    if new_status and new_status != old_status:
+        transfer.processed_by = current_admin.id
+        if new_status == "completed":
+            transfer.completed_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(transfer)
+
+    # Clear cache
+    try:
+        redis_client = await get_redis()
+        await redis_client.delete(f"transfer_status:{transfer.id}")
+    except Exception:
+        pass  # Redis not available
+
+    return BaseResponse.success_response(data=transfer, message="Transfer operation completed successfully")
+
+# User endpoints (parameterized routes come after specific admin routes)
 @router.get("/", response_model=BaseResponse[List[TransferResponse]])
 async def get_user_transfers(
     skip: int = 0,
@@ -142,7 +351,7 @@ async def get_user_transfers(
     query = select(TransferRequest).where(TransferRequest.user_id == current_user.id)
     
     if type_filter:
-        query = query.where(TransferRequest.type == type_filter)
+        query = query.where(TransferRequest.type_ == type_filter)
     
     if status_filter:
         query = query.where(TransferRequest.status == status_filter)
@@ -355,172 +564,6 @@ async def bulk_update_transfer_status(
     )
 
 
-# Admin endpoints
-class PaginatedTransfersResponse(BaseModel):
-    transfers: List[TransferResponse]
-    total_count: int
-    page: int
-    page_size: int
-    total_pages: int
-    has_next: bool
-    has_prev: bool
-
-@router.get("/admin/pending-count", response_model=BaseResponse[dict])
-async def get_pending_count(
-    db: AsyncSession = Depends(get_db),
-    current_admin = Depends(check_admin_permission("can_view_transfers"))
-):
-    """Get count of pending transfers for sidebar badge"""
-    try:
-        # Count pending transfers
-        count_query = select(func.count(TransferRequest.id)).where(TransferRequest.status == 'pending')
-        result = await db.execute(count_query)
-        count = result.scalar() or 0
-        
-        return BaseResponse(
-            success=True,
-            data={
-                "pending_count": count,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        )
-    except Exception as e:
-        logger.error(f"Error getting pending count: {str(e)}")
-        return BaseResponse(
-            success=False,
-            error="Failed to get pending count"
-        )
-
-@router.get("/admin/all", response_model=BaseResponse[PaginatedTransfersResponse])
-async def get_all_transfers(
-    skip: int = 0,
-    limit: int = 50,
-    type_filter: Optional[str] = None,
-    status_filter: Optional[str] = None,
-    search: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
-    current_admin = Depends(check_admin_permission("can_view_transfers"))
-):
-    """Get all transfer requests (admin only)"""
-    base_query = select(TransferRequest).options(selectinload(TransferRequest.user))
-    count_query = select(func.count(TransferRequest.id))
-    
-    # Apply filters to both queries
-    if type_filter:
-        base_query = base_query.where(TransferRequest.type == type_filter)
-        count_query = count_query.where(TransferRequest.type == type_filter)
-    
-    if status_filter:
-        base_query = base_query.where(TransferRequest.status == status_filter)
-        count_query = count_query.where(TransferRequest.status == status_filter)
-    
-    if search:
-        # Search in user email, transaction hash, or transfer ID
-        search_condition = or_(
-            User.email.ilike(f"%{search}%"),
-            TransferRequest.crypto_tx_hash.ilike(f"%{search}%"),
-            TransferRequest.id.cast(str).ilike(f"%{search}%")
-        )
-        base_query = base_query.join(User).where(search_condition)
-        count_query = count_query.join(User).where(search_condition)
-    
-    # Get total count
-    total_result = await db.execute(count_query)
-    total_count = total_result.scalar() or 0
-    
-    # Get transfers with pagination
-    query = base_query.order_by(TransferRequest.created_at.desc()).offset(skip).limit(limit)
-    result = await db.execute(query)
-    transfers = result.scalars().all()
-    
-    # Calculate pagination info
-    page = (skip // limit) + 1
-    total_pages = (total_count + limit - 1) // limit
-    has_next = skip + limit < total_count
-    has_prev = skip > 0
-    
-    response_data = PaginatedTransfersResponse(
-        transfers=transfers,
-        total_count=total_count,
-        page=page,
-        page_size=limit,
-        total_pages=total_pages,
-        has_next=has_next,
-        has_prev=has_prev
-    )
-    
-    return BaseResponse.success_response(data=response_data, message="Transfers retrieved successfully")
-
-
-@router.put("/admin/{transfer_id}", response_model=BaseResponse[TransferResponse])
-async def update_transfer(
-    transfer_id: UUID,
-    update_data: TransferUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_admin = Depends(check_admin_permission("can_approve_transfers"))
-):
-    """Update transfer request (admin only)"""
-    result = await db.execute(select(TransferRequest).where(TransferRequest.id == transfer_id))
-    transfer = result.scalar_one_or_none()
-    
-    if not transfer:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Transfer not found"
-        )
-    
-    # Update fields
-    for field, value in update_data.model_dump(exclude_unset=True).items():
-        setattr(transfer, field, value)
-    
-    # Set processed_by and completion time
-    transfer.processed_by = current_admin.id
-    if update_data.status == "completed":
-        transfer.completed_at = func.now()
-    
-    await db.commit()
-    await db.refresh(transfer)
-    
-    # Update cache (if Redis is available)
-    try:
-        redis_client = await get_redis()
-        await redis_client.delete(f"transfer_status:{transfer_id}")
-    except Exception:
-        # Redis not available, skip cache update
-        pass
-    
-    return BaseResponse.success_response(data=transfer, message="Transfer operation completed successfully")
-
-
-@router.get("/admin/stats", response_model=BaseResponse[TransferStats])
-async def get_transfer_stats(
-    db: AsyncSession = Depends(get_db),
-    current_admin = Depends(check_admin_permission("can_view_reports"))
-):
-    """Get transfer statistics (admin only)"""
-    # Get counts by status
-    result = await db.execute(
-        select(
-            func.count(TransferRequest.id).label("total"),
-            func.count().filter(TransferRequest.status == "pending").label("pending"),
-            func.count().filter(TransferRequest.status == "completed").label("completed"),
-            func.count().filter(TransferRequest.status == "failed").label("failed"),
-            func.sum(TransferRequest.amount).label("total_volume"),
-            func.sum(TransferRequest.fee).label("total_fees")
-        )
-    )
-    stats = result.first()
-    
-    transfer_stats = TransferStats(
-        total_requests=stats.total or 0,
-        pending_requests=stats.pending or 0,
-        completed_requests=stats.completed or 0,
-        failed_requests=stats.failed or 0,
-        total_volume=float(stats.total_volume or 0),
-        total_fees=float(stats.total_fees or 0)
-    )
-    
-    return BaseResponse.success_response(data=transfer_stats, message="Transfer statistics retrieved successfully")
 
 
 # WebSocket for real-time updates
