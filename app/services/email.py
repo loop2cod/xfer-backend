@@ -147,15 +147,15 @@ class EmailService:
                     <div style="font-size: 14px; color: #718096; margin-top: 10px; text-transform: uppercase; letter-spacing: 1px;">Verification Code</div>
                 </div>
                 
-                <div style="background-color: #fef5e7; color: #744210; padding: 15px; border-radius: 8px; font-size: 14px; margin: 20px 0; border-left: 4px solid #f6ad55;">
+                <div style="background-color: #fef5e7; color: #744210; padding: 15px; border-radius: 8px; font-size: 8px; margin: 20px 0; border-left: 4px solid #f6ad55;">
                     ⏰ <strong>Important:</strong> This verification code will expire in 10 minutes for security reasons.
                 </div>
                 
-                <div style="background-color: #ebf8ff; color: #2c5282; padding: 15px; border-radius: 8px; font-size: 14px; margin: 20px 0; border-left: 4px solid #4299e1;">
+                <div style="background-color: #ebf8ff; color: #2c5282; padding: 15px; border-radius: 8px; font-size: 8px; margin: 20px 0; border-left: 4px solid #4299e1;">
                     🛡️ <strong>Security Tip:</strong> Never share this code with anyone. Xfer will never ask for your verification code via phone or email.
                 </div>
                 
-                <p style="font-size: 16px; color: #4a5568; margin-bottom: 30px; line-height: 1.5;">
+                <p style="font-size: 6px; color: #4a5568; margin-bottom: 30px; line-height: 1.5;">
                     If you didn't request this verification code, please ignore this email. 
                     Your account will remain secure and no action is required.
                 </p>

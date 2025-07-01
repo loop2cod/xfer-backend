@@ -7,29 +7,25 @@ from app.core.database_types import UUIDType
 from datetime import datetime, timezone
 
 
-class Wallet(Base):
-    __tablename__ = "wallets"
+class AdminWallet(Base):
+    __tablename__ = "admin_wallets"
 
     id = Column(UUIDType, primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUIDType, ForeignKey("users.id"), nullable=False)
     
     # Wallet Details
+    name = Column(String(100), nullable=False)
     address = Column(String(255), nullable=False, unique=True, index=True)
     currency = Column(String(10), nullable=False, default="USDT")
     network = Column(String(20), nullable=False, default="TRC20")  # TRC20, ERC20, etc.
     
-    # Balance Information
-    balance = Column(Numeric(20, 8), default=0)
-    pending_balance = Column(Numeric(20, 8), default=0)
-    frozen_balance = Column(Numeric(20, 8), default=0)
+    # Fee Information
+    fee_percentage = Column(Numeric(5, 2), default=0)  # Fee percentage (e.g., 1.5%)
     
     # Wallet Status
     is_active = Column(Boolean, default=True)
-    is_verified = Column(Boolean, default=False)
-    wallet_type = Column(String(20), default="user")  # user, admin, system
+    is_primary = Column(Boolean, default=False)  # Only one wallet should be primary
     
     # Additional Information
-    label = Column(String(100), nullable=True)
     notes = Column(Text, nullable=True)
     
     # Security
@@ -39,8 +35,8 @@ class Wallet(Base):
     # Timestamps
     created_at = Column(
         DateTime(timezone=True),
-        server_default=func.now(),  # SQLite will store this as local time
-        default=datetime.now(timezone.utc)  # Python will use UTC if not provided
+        server_default=func.now(),
+        default=datetime.now(timezone.utc)
     )
     updated_at = Column(
         DateTime(timezone=True),
@@ -49,12 +45,5 @@ class Wallet(Base):
         default=datetime.now(timezone.utc)
     )
 
-    # Relationships
-    user = relationship("User", back_populates="wallets")
-
     def __repr__(self):
-        return f"<Wallet(address='{self.address}', currency='{self.currency}', balance='{self.balance}')>"
-    
-    @staticmethod
-    def utcnow():
-        return datetime.utcnow()
+        return f"<AdminWallet(name='{self.name}', address='{self.address}', is_primary='{self.is_primary}')>"

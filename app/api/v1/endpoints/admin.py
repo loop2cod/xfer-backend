@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func
 from typing import List, Optional
 from uuid import UUID
 from datetime import datetime, timedelta
@@ -11,7 +11,7 @@ from app.models.admin import Admin
 from app.models.user import User
 from app.models.transfer import TransferRequest
 from app.models.wallet import Wallet
-from app.schemas.admin import AdminCreate, AdminUpdate, AdminResponse
+from app.schemas.admin import AdminCreate, AdminUpdate, AdminResponse, AdminPermissionUpdate, AdminRolePermissions, DEFAULT_PERMISSIONS
 from app.schemas.base import BaseResponse, MessageResponse
 from app.core.security import get_password_hash, generate_api_key
 
@@ -127,14 +127,19 @@ async def create_admin(
     
     # Create new admin
     hashed_password = get_password_hash(admin_data.password)
+    
+    # Set default permissions if not provided
+    permissions = admin_data.permissions or DEFAULT_PERMISSIONS.get(admin_data.role, {})
+    
     admin = Admin(
         email=admin_data.email,
         password_hash=hashed_password,
         first_name=admin_data.first_name,
         last_name=admin_data.last_name,
         role=admin_data.role,
-        permissions=admin_data.permissions,
-        created_by=current_admin.id
+        permissions=permissions,
+        created_by=current_admin.id,
+        is_super_admin=(admin_data.role == "super_admin")
     )
     
     db.add(admin)
@@ -267,20 +272,22 @@ async def get_dashboard_stats(
     
     # Get recent activity (last 24 hours)
     last_24h = datetime.utcnow() - timedelta(hours=24)
-    recent_activity = await db.execute(
-        select(
-            func.count(TransferRequest.id).label("recent_transfers"),
-            func.count(User.id).label("new_users")
-        ).select_from(
-            TransferRequest.outerjoin(User)
-        ).where(
-            and_(
-                TransferRequest.created_at >= last_24h,
-                User.created_at >= last_24h
-            )
+
+    # Get recent transfers count
+    recent_transfers_result = await db.execute(
+        select(func.count(TransferRequest.id)).where(
+            TransferRequest.created_at >= last_24h
         )
     )
-    activity_stats = recent_activity.first()
+    recent_transfers_count = recent_transfers_result.scalar()
+
+    # Get new users count
+    new_users_result = await db.execute(
+        select(func.count(User.id)).where(
+            User.created_at >= last_24h
+        )
+    )
+    new_users_count = new_users_result.scalar()
     
     dashboard_data = {
         "users": {
@@ -299,9 +306,102 @@ async def get_dashboard_stats(
             "total_balance": float(wallets_stats.total_balance or 0)
         },
         "recent_activity": {
-            "transfers_24h": activity_stats.recent_transfers or 0,
-            "new_users_24h": activity_stats.new_users or 0
+            "transfers_24h": recent_transfers_count or 0,
+            "new_users_24h": new_users_count or 0
         }
     }
     
     return BaseResponse.success_response(data=dashboard_data, message="Dashboard statistics retrieved successfully")
+
+
+@router.get("/roles/permissions", response_model=BaseResponse[List[AdminRolePermissions]])
+async def get_role_permissions(
+    current_admin: Admin = Depends(get_super_admin)
+):
+    """Get available roles and their default permissions (super admin only)"""
+    roles_data = []
+    
+    for role, permissions in DEFAULT_PERMISSIONS.items():
+        role_info = AdminRolePermissions(
+            role=role,
+            permissions=list(permissions.keys()),
+            description=get_role_description(role)
+        )
+        roles_data.append(role_info)
+    
+    return BaseResponse.success_response(data=roles_data, message="Role permissions retrieved successfully")
+
+
+@router.put("/{admin_id}/permissions", response_model=BaseResponse[AdminResponse])
+async def update_admin_permissions(
+    admin_id: UUID,
+    permission_update: AdminPermissionUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_admin: Admin = Depends(get_super_admin)
+):
+    """Update admin permissions (super admin only)"""
+    
+    result = await db.execute(select(Admin).where(Admin.id == admin_id))
+    admin = result.scalar_one_or_none()
+    
+    if not admin:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Admin not found"
+        )
+    
+    # Prevent changing super admin permissions of self
+    if admin.id == current_admin.id and admin.is_super_admin:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot modify your own super admin permissions"
+        )
+    
+    # Update permissions
+    admin.permissions = permission_update.permissions
+    await db.commit()
+    await db.refresh(admin)
+    
+    return BaseResponse.success_response(data=admin, message="Admin permissions updated successfully")
+
+
+@router.post("/{admin_id}/toggle-status", response_model=BaseResponse[AdminResponse])
+async def toggle_admin_status(
+    admin_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_admin: Admin = Depends(get_super_admin)
+):
+    """Toggle admin active status (super admin only)"""
+    
+    if admin_id == current_admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot toggle your own status"
+        )
+    
+    result = await db.execute(select(Admin).where(Admin.id == admin_id))
+    admin = result.scalar_one_or_none()
+    
+    if not admin:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Admin not found"
+        )
+    
+    # Toggle status
+    admin.is_active = not admin.is_active
+    await db.commit()
+    await db.refresh(admin)
+    
+    status_text = "activated" if admin.is_active else "deactivated"
+    return BaseResponse.success_response(data=admin, message=f"Admin {status_text} successfully")
+
+
+def get_role_description(role: str) -> str:
+    """Get role description"""
+    descriptions = {
+        "super_admin": "Full system access with ability to manage other admins",
+        "admin": "Standard admin access with user and transfer management capabilities",
+        "operator": "Limited access focused on transfer processing and reporting"
+    }
+    return descriptions.get(role, "Unknown role")

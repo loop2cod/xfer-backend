@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 import random
 import string
 
@@ -26,6 +26,7 @@ from app.schemas.auth import (
     PreRegistrationCodeVerifyRequest
 )
 from app.schemas.user import UserCreate, UserResponse, UserLogin
+from app.schemas.admin import AdminLogin
 from app.schemas.base import BaseResponse, MessageResponse
 from app.services.email import email_service
 from app.services.verification import verification_service
@@ -48,15 +49,25 @@ async def register(
             detail="Email already registered"
         )
     
+    # Extract first name from email if not provided
+    first_name = user_data.first_name
+    if not first_name:
+        # Get the part before @ in email
+        email_name_part = user_data.email.split('@')[0]
+        # Remove any numbers and special characters (optional)
+        clean_name = ''.join([char for char in email_name_part if char.isalpha()])
+        # Use the cleaned name or fallback to original if empty
+        first_name = clean_name if clean_name else email_name_part
+    
     # Create new user
     hashed_password = get_password_hash(user_data.password)
     verification_code = generate_verification_code()
-    expiration_time = datetime.utcnow() + timedelta(minutes=10)
+    expiration_time = datetime.now(timezone.utc) + timedelta(minutes=10)
     
     user = User(
         email=user_data.email,
         password_hash=hashed_password,
-        first_name=user_data.first_name,
+        first_name=first_name,  # Use the extracted name
         last_name=user_data.last_name,
         phone=user_data.phone,
         verification_code=verification_code,
@@ -75,8 +86,6 @@ async def register(
     )
     
     return BaseResponse.success_response(data=user, message="User registered successfully")
-
-
 @router.post("/login", response_model=BaseResponse[Token])
 async def login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
     """User login"""
@@ -101,8 +110,7 @@ async def login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
     refresh_token = create_refresh_token(subject=str(user.id))
     
     # Update last login
-    from sqlalchemy.sql import func
-    user.last_login = func.now()
+    user.last_login = datetime.now(timezone.utc)
     await db.commit()
     
     token_data = {
@@ -115,13 +123,13 @@ async def login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/admin/login", response_model=BaseResponse[Token])
-async def admin_login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
+async def admin_login(admin_data: AdminLogin, db: AsyncSession = Depends(get_db)):
     """Admin login"""
     # Find admin
-    result = await db.execute(select(Admin).where(Admin.email == user_data.email))
+    result = await db.execute(select(Admin).where(Admin.email == admin_data.email))
     admin = result.scalar_one_or_none()
     
-    if not admin or not verify_password(user_data.password, admin.password_hash):
+    if not admin or not verify_password(admin_data.password, admin.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
@@ -138,8 +146,7 @@ async def admin_login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
     refresh_token = create_refresh_token(subject=str(admin.id))
     
     # Update last login
-    from sqlalchemy.sql import func
-    admin.last_login = func.now()
+    admin.last_login = datetime.now(timezone.utc)
     await db.commit()
     
     token_data = {
@@ -185,6 +192,46 @@ async def refresh_token(refresh_data: RefreshToken, db: AsyncSession = Depends(g
     return BaseResponse.success_response(data=token_data, message="Token refreshed successfully")
 
 
+@router.post("/admin/refresh", response_model=BaseResponse[Token])
+async def refresh_admin_token(refresh_data: RefreshToken, db: AsyncSession = Depends(get_db)):
+    """Refresh admin access token"""
+    admin_id = verify_token(refresh_data.refresh_token, token_type="refresh")
+    
+    if admin_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token"
+        )
+    
+    # Check if admin still exists and is active
+    result = await db.execute(select(Admin).where(Admin.id == admin_id))
+    admin = result.scalar_one_or_none()
+    
+    if not admin or not admin.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Admin not found or inactive"
+        )
+    
+    # Create new tokens
+    access_token = create_access_token(subject=str(admin.id))
+    new_refresh_token = create_refresh_token(subject=str(admin.id))
+    
+    token_data = {
+        "access_token": access_token,
+        "refresh_token": new_refresh_token,
+        "token_type": "bearer"
+    }
+    
+    return BaseResponse.success_response(data=token_data, message="Admin token refreshed successfully")
+
+
+@router.post("/admin/logout", response_model=MessageResponse)
+async def admin_logout():
+    """Admin logout (client-side token removal)"""
+    return MessageResponse.success_message("Admin logged out successfully")
+
+
 def generate_verification_code() -> str:
     """Generate a 6-digit verification code"""
     return ''.join(random.choices(string.digits, k=6))
@@ -217,7 +264,7 @@ async def send_verification_code(
     verification_code = generate_verification_code()
     
     # Set expiration time (10 minutes from now)
-    expiration_time = datetime.utcnow() + timedelta(minutes=10)
+    expiration_time = datetime.now(timezone.utc) + timedelta(minutes=10)
     
     # Update user with verification code
     user.verification_code = verification_code
@@ -260,7 +307,7 @@ async def verify_email(request: EmailVerificationRequest, db: AsyncSession = Dep
             detail="No verification code found. Please request a new one."
         )
     
-    if datetime.utcnow() > user.verification_code_expires:
+    if datetime.now(timezone.utc) > user.verification_code_expires:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Verification code has expired. Please request a new one."
@@ -283,8 +330,7 @@ async def verify_email(request: EmailVerificationRequest, db: AsyncSession = Dep
     refresh_token = create_refresh_token(subject=str(user.id))
     
     # Update last login
-    from sqlalchemy.sql import func
-    user.last_login = func.now()
+    user.last_login = datetime.now(timezone.utc)
     
     await db.commit()
     

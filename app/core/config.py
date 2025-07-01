@@ -1,6 +1,5 @@
 from pydantic_settings import BaseSettings
 from typing import List, Optional
-import os
 
 
 class Settings(BaseSettings):
@@ -30,6 +29,10 @@ class Settings(BaseSettings):
     TRON_GRID_API_KEY: Optional[str] = None
     ADMIN_WALLET_ADDRESS: str
     ADMIN_WALLET_PRIVATE_KEY: Optional[str] = None
+
+    # Ethereum/EVM Configuration
+    INFURA_PROJECT_ID: Optional[str] = None
+    BSC_RPC_URL: Optional[str] = "https://bsc-dataseed.binance.org/"
     
     # Email Configuration
     SMTP_SERVER: str = "smtp.gmail.com"

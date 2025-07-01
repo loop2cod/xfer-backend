@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr, validator
-from typing import Optional, Dict, Any
-from datetime import datetime
+from typing import Optional, Dict, Any, List
+from datetime import datetime, timezone
 from uuid import UUID
 
 
@@ -9,6 +9,11 @@ class AdminBase(BaseModel):
     first_name: str
     last_name: str
     role: str = "admin"
+
+
+class AdminLogin(BaseModel):
+    email: EmailStr
+    password: str
 
 
 class AdminCreate(AdminBase):
@@ -49,3 +54,51 @@ class AdminResponse(AdminBase):
     
     class Config:
         from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v.tzinfo else v.replace(tzinfo=timezone.utc).isoformat()
+        }
+
+
+class AdminPermissionUpdate(BaseModel):
+    permissions: Dict[str, Any]
+
+
+class AdminRolePermissions(BaseModel):
+    role: str
+    permissions: List[str]
+    description: str
+
+
+# Default permissions for different roles
+DEFAULT_PERMISSIONS = {
+    "super_admin": {
+        "can_manage_admins": True,
+        "can_manage_users": True,
+        "can_approve_transfers": True,
+        "can_view_reports": True,
+        "can_manage_wallets": True,
+        "can_view_audit_logs": True,
+        "can_manage_system_settings": True,
+        "can_export_data": True
+    },
+    "admin": {
+        "can_manage_admins": False,
+        "can_manage_users": True,
+        "can_approve_transfers": True,
+        "can_view_reports": True,
+        "can_manage_wallets": True,
+        "can_view_audit_logs": True,
+        "can_manage_system_settings": False,
+        "can_export_data": True
+    },
+    "operator": {
+        "can_manage_admins": False,
+        "can_manage_users": False,
+        "can_approve_transfers": True,
+        "can_view_reports": True,
+        "can_manage_wallets": False,
+        "can_view_audit_logs": False,
+        "can_manage_system_settings": False,
+        "can_export_data": False
+    }
+}

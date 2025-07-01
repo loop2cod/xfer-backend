@@ -60,3 +60,13 @@ def generate_api_key() -> str:
     """Generate API key for admin access"""
     import secrets
     return secrets.token_urlsafe(32)
+
+
+def generate_transfer_id() -> str:
+    """Generate alphanumeric transfer ID in format TX-XXXXXXXX"""
+    import random
+    import string
+
+    # Generate 8 random alphanumeric characters (digits only for now as requested)
+    random_digits = ''.join(random.choices(string.digits, k=8))
+    return f"TX-{random_digits}"

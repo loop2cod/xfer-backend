@@ -1,6 +1,6 @@
 from pydantic import BaseModel, validator
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -48,3 +48,6 @@ class WalletResponse(WalletBase):
     
     class Config:
         from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v.tzinfo else v.replace(tzinfo=timezone.utc).isoformat()
+        }

@@ -4,19 +4,25 @@ from sqlalchemy.orm import relationship
 import uuid
 from app.db.database import Base
 from app.core.database_types import UUIDType
+from app.core.security import generate_transfer_id
+from datetime import datetime, timezone
 
 
 class TransferRequest(Base):
     __tablename__ = "transfer_requests"
 
     id = Column(UUIDType, primary_key=True, default=uuid.uuid4)
+    transfer_id = Column(String(20), unique=True, nullable=False, default=generate_transfer_id)
     user_id = Column(UUIDType, ForeignKey("users.id"), nullable=False)
     
     # Transfer Details
-    type = Column(String(20), nullable=False)  # crypto-to-fiat, fiat-to-crypto
+    transfer_type = Column(String(20), nullable=False)  # crypto-to-fiat, fiat-to-crypto, crypto_purchase, bank_purchase
+    type = Column(String(20), nullable=False)  # crypto-to-fiat, fiat-to-crypto (backward compatibility)
     amount = Column(Numeric(20, 8), nullable=False)
-    fee = Column(Numeric(20, 8), nullable=False)
-    net_amount = Column(Numeric(20, 8), nullable=False)
+    fee_amount = Column(Numeric(20, 8), nullable=False, default=0)
+    fee = Column(Numeric(20, 8), nullable=False)  # backward compatibility
+    amount_after_fee = Column(Numeric(20, 8), nullable=False)
+    net_amount = Column(Numeric(20, 8), nullable=False)  # backward compatibility
     currency = Column(String(10), nullable=False, default="USDT")
     
     # Status and Processing
@@ -27,7 +33,10 @@ class TransferRequest(Base):
     # Crypto Transaction Details
     crypto_tx_hash = Column(String(255), nullable=True)
     deposit_wallet_address = Column(String(255), nullable=True)
+    recipient_wallet = Column(String(255), nullable=True)  # User's wallet for purchases
     admin_wallet_address = Column(String(255), nullable=True)
+    admin_wallet_id = Column(UUIDType, ForeignKey("admin_wallets.id"), nullable=True)
+    network = Column(String(20), nullable=True)  # TRC20, ERC20, etc.
     confirmation_count = Column(Numeric(3, 0), default=0)
     required_confirmations = Column(Numeric(3, 0), default=6)
     
@@ -54,18 +63,38 @@ class TransferRequest(Base):
     #   {...}
     # ]
     
+    # Admin Bank Account (for purchases)
+    admin_bank_account_id = Column(UUIDType, ForeignKey("admin_bank_accounts.id"), nullable=True)
+    payment_method = Column(String(20), nullable=True)  # crypto, bank_transfer, etc.
+    
     # Processing Information
     processed_by = Column(UUIDType, nullable=True)  # Admin user ID
     processing_notes = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)  # General notes
     
     # Timestamps
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),  # SQLite will store this as local time
+        default=datetime.now(timezone.utc)  # Python will use UTC if not provided
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=datetime.now(timezone.utc),
+        default=datetime.now(timezone.utc)
+    )
     completed_at = Column(DateTime(timezone=True), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
     
     # Relationships
     user = relationship("User", back_populates="transfer_requests")
+    admin_wallet = relationship("AdminWallet", foreign_keys=[admin_wallet_id])
+    admin_bank_account = relationship("AdminBankAccount", foreign_keys=[admin_bank_account_id])
 
     def __repr__(self):
         return f"<TransferRequest(id='{self.id}', type='{self.type}', amount='{self.amount}', status='{self.status}')>"
+    
+    @staticmethod
+    def utcnow():
+        return datetime.utcnow()

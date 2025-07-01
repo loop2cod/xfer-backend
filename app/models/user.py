@@ -4,6 +4,7 @@ from sqlalchemy.orm import relationship
 import uuid
 from app.db.database import Base
 from app.core.database_types import UUIDType
+from datetime import datetime, timezone
 
 
 class User(Base):
@@ -28,8 +29,17 @@ class User(Base):
     verification_code_expires = Column(DateTime(timezone=True), nullable=True)
     
     # Timestamps
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),  # SQLite will store this as local time
+        default=datetime.now(timezone.utc)  # Python will use UTC if not provided
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=datetime.now(timezone.utc),
+        default=datetime.now(timezone.utc)
+    )
     last_login = Column(DateTime(timezone=True), nullable=True)
     
     # Relationships
@@ -38,3 +48,7 @@ class User(Base):
 
     def __repr__(self):
         return f"<User(email='{self.email}', kyc_status='{self.kyc_status}')>"
+    
+    @staticmethod
+    def utcnow():
+        return datetime.utcnow()

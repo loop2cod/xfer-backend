@@ -10,6 +10,7 @@ import logging
 from app.core.config import settings
 from app.api.v1.api import api_router
 from app.db.database import init_db, close_db
+from datetime import datetime, timezone
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -124,7 +125,7 @@ async def root():
         "message": "Xfer API",
         "version": "1.0.0",
         "status": "healthy",
-        "timestamp": time.time()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
 

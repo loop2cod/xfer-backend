@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr, validator
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 
@@ -44,6 +44,9 @@ class UserResponse(UserBase):
     
     class Config:
         from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v.tzinfo else v.replace(tzinfo=timezone.utc).isoformat()
+        }
 
 
 class UserProfile(UserResponse):
@@ -53,3 +56,6 @@ class UserProfile(UserResponse):
     
     class Config:
         from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v.tzinfo else v.replace(tzinfo=timezone.utc).isoformat()
+        }

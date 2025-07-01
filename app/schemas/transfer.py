@@ -1,16 +1,26 @@
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, validator, Field
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
 
 class BankAccountInfo(BaseModel):
-    account_name: str
-    account_number: str
-    bank_name: str
-    routing_number: str
-    transfer_amount: str
+    account_name: str = Field(..., min_length=2, max_length=100, description="Account holder name")
+    account_number: str = Field(..., min_length=5, max_length=50, description="Bank account number")
+    bank_name: str = Field(..., min_length=2, max_length=100, description="Bank name")
+    routing_number: str = Field(..., min_length=5, max_length=20, description="Bank routing number")
+    transfer_amount: str = Field(..., description="Amount to transfer to this account")
+
+    @validator('transfer_amount')
+    def validate_transfer_amount(cls, v):
+        try:
+            amount = Decimal(v)
+            if amount <= 0:
+                raise ValueError('Transfer amount must be greater than 0')
+            return v
+        except (ValueError, TypeError):
+            raise ValueError('Transfer amount must be a valid number')
 
 
 class TransferBase(BaseModel):
@@ -20,21 +30,30 @@ class TransferBase(BaseModel):
 
 
 class TransferCreate(TransferBase):
-    deposit_wallet_address: Optional[str] = None
-    crypto_tx_hash: Optional[str] = None
-    bank_account_info: Optional[BankAccountInfo] = None
-    bank_accounts: Optional[List[BankAccountInfo]] = None
-    
+    deposit_wallet_address: Optional[str] = Field(None, min_length=20, max_length=255, description="User's wallet address for deposit")
+    crypto_tx_hash: Optional[str] = Field(None, min_length=20, max_length=255, description="Blockchain transaction hash")
+    bank_account_info: Optional[BankAccountInfo] = Field(None, description="Single bank account info (legacy)")
+    bank_accounts: Optional[List[BankAccountInfo]] = Field(None, description="Multiple bank accounts for distribution")
+    network: Optional[str] = Field(default="TRC20", description="Blockchain network")
+
     @validator('type')
     def validate_type(cls, v):
         if v not in ['crypto-to-fiat', 'fiat-to-crypto']:
             raise ValueError('Type must be either crypto-to-fiat or fiat-to-crypto')
         return v
-    
+
     @validator('amount')
     def validate_amount(cls, v):
         if v <= 0:
             raise ValueError('Amount must be greater than 0')
+        if v > Decimal('1000000'):  # 1M limit
+            raise ValueError('Amount exceeds maximum limit')
+        return v
+
+    @validator('bank_accounts')
+    def validate_bank_accounts(cls, v, values):
+        if v and len(v) > 10:  # Maximum 10 bank accounts
+            raise ValueError('Maximum 10 bank accounts allowed')
         return v
 
 
@@ -54,25 +73,38 @@ class TransferUpdate(BaseModel):
 
 class TransferResponse(TransferBase):
     id: UUID
+    transfer_id: str
     user_id: UUID
+    transfer_type: str
     fee: Decimal
+    fee_amount: Decimal
     net_amount: Decimal
+    amount_after_fee: Decimal
     status: str
     status_message: Optional[str] = None
+    priority: Optional[str] = None
     crypto_tx_hash: Optional[str] = None
     deposit_wallet_address: Optional[str] = None
     admin_wallet_address: Optional[str] = None
+    admin_wallet_id: Optional[UUID] = None
+    network: Optional[str] = None
     confirmation_count: Optional[int] = None
     required_confirmations: Optional[int] = None
     bank_account_info: Optional[Dict[str, Any]] = None
     bank_accounts: Optional[List[Dict[str, Any]]] = None
+    processed_by: Optional[UUID] = None
+    processing_notes: Optional[str] = None
+    notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
-    
+
     class Config:
         from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v.tzinfo else v.replace(tzinfo=timezone.utc).isoformat()
+        }
 
 
 class TransferStats(BaseModel):

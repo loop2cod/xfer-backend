@@ -9,3 +9,10 @@ lib/
 
 # Virtual environment
 venv
+
+# Logs
+logs/
+
+# DB
+db/
+.db

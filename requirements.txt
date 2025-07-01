@@ -6,6 +6,7 @@ aiosqlite==0.19.0
 alembic==1.12.1
 redis==5.0.1
 celery==5.3.4
+# JWT handling - NOTE: Use python-jose, NOT jose (which is Python 2 only)
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.6

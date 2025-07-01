@@ -58,12 +58,14 @@ async def create_admin():
             role="super_admin",
             is_super_admin=True,
             permissions={
-                "can_approve_transfers": True,
+                "can_manage_admins": True,
                 "can_manage_users": True,
+                "can_approve_transfers": True,
                 "can_view_reports": True,
                 "can_manage_wallets": True,
-                "can_approve_kyc": True,
-                "can_manage_admins": True
+                "can_view_audit_logs": True,
+                "can_manage_system_settings": True,
+                "can_export_data": True
             }
         )
         
