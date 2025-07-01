@@ -223,13 +223,19 @@ async def get_all_transfers(
     
     if search:
         # Search in user email, transaction hash, or transfer ID
+        # Use exists() with subquery to avoid interfering with selectinload
+        user_email_subquery = select(User.id).where(
+            User.id == TransferRequest.user_id,
+            User.email.ilike(f"%{search}%")
+        ).exists()
+        
         search_condition = or_(
-            User.email.ilike(f"%{search}%"),
+            user_email_subquery,
             TransferRequest.crypto_tx_hash.ilike(f"%{search}%"),
             TransferRequest.transfer_id.ilike(f"%{search}%")
         )
-        base_query = base_query.join(User).where(search_condition)
-        count_query = count_query.join(User).where(search_condition)
+        base_query = base_query.where(search_condition)
+        count_query = count_query.where(search_condition)
     
     # Get total count
     total_result = await db.execute(count_query)

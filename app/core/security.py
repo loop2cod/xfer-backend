@@ -70,3 +70,13 @@ def generate_transfer_id() -> str:
     # Generate 8 random alphanumeric characters (digits only for now as requested)
     random_digits = ''.join(random.choices(string.digits, k=8))
     return f"TX-{random_digits}"
+
+
+def generate_customer_id() -> str:
+    """Generate alphanumeric customer ID in format CT-XXXXXXXX"""
+    import random
+    import string
+
+    # Generate 8 random digits
+    random_digits = ''.join(random.choices(string.digits, k=8))
+    return f"CT-{random_digits}"

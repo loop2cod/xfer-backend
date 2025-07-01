@@ -4,6 +4,7 @@ from sqlalchemy.orm import relationship
 import uuid
 from app.db.database import Base
 from app.core.database_types import UUIDType
+from app.core.security import generate_customer_id
 from datetime import datetime, timezone
 
 
@@ -11,6 +12,7 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(UUIDType, primary_key=True, default=uuid.uuid4)
+    customer_id = Column(String(20), unique=True, nullable=False, default=generate_customer_id)
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
     first_name = Column(String(100), nullable=True)

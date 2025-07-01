@@ -5,6 +5,18 @@ from decimal import Decimal
 from uuid import UUID
 
 
+class UserInfo(BaseModel):
+    """Simplified user info for transfer responses"""
+    id: UUID
+    customer_id: str
+    email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+
 class BankAccountInfo(BaseModel):
     account_name: str = Field(..., min_length=2, max_length=100, description="Account holder name")
     account_number: str = Field(..., min_length=5, max_length=50, description="Bank account number")
@@ -103,6 +115,7 @@ class TransferResponse(BaseModel):
     admin_remarks: Optional[str] = None
     internal_notes: Optional[str] = None
     status_history: Optional[List[Dict[str, Any]]] = None
+    user: Optional[UserInfo] = None  # Add user information
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None

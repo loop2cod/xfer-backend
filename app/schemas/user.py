@@ -35,6 +35,7 @@ class UserLogin(BaseModel):
 
 class UserResponse(UserBase):
     id: UUID
+    customer_id: str
     kyc_status: str
     is_active: bool
     is_verified: bool
