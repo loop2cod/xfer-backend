@@ -80,8 +80,11 @@ class TransferUpdate(BaseModel):
 
     @validator('status')
     def validate_status(cls, v):
-        if v and v not in ['pending', 'processing', 'on_hold', 'completed', 'failed', 'cancelled']:
-            raise ValueError('Invalid status')
+        valid_statuses = [
+            'pending', 'processing', 'on_hold', 'completed', 'failed', 'cancelled', 'refunded'
+        ]
+        if v and v not in valid_statuses:
+            raise ValueError(f'Invalid status. Must be one of: {", ".join(valid_statuses)}')
         return v
 
 

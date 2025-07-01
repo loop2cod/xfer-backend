@@ -38,8 +38,7 @@ class AdminWalletResponse(AdminWalletBase):
     last_activity_at: Optional[datetime] = None
     last_transaction_hash: Optional[str] = None
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
 
 class SetPrimaryWallet(BaseModel):

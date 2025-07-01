@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from app.api.deps import get_current_user, check_admin_permission
 from app.db.database import get_db, get_redis
 from app.models.user import User
+from app.models.admin import Admin
 from app.models.transfer import TransferRequest
 from app.models.admin_wallet import AdminWallet
 from app.core.config import settings
@@ -103,7 +104,7 @@ async def create_transfer(
                 detail=f"Total bank account amounts (${total_bank_amount}) exceed net amount (${net_amount})"
             )
 
-    # Create transfer request
+    # Create transfer request with initial status history
     transfer = TransferRequest(
         user_id=current_user.id,
         transfer_type=transfer_data.type,
@@ -121,7 +122,17 @@ async def create_transfer(
         network=network,
         bank_account_info=transfer_data.bank_account_info.model_dump() if transfer_data.bank_account_info else None,
         bank_accounts=[acc.model_dump() for acc in transfer_data.bank_accounts] if transfer_data.bank_accounts else None,
-        expires_at=datetime.now(timezone.utc).replace(hour=23, minute=59, second=59, microsecond=999999)  # Expires end of day
+        expires_at=datetime.now(timezone.utc).replace(hour=23, minute=59, second=59, microsecond=999999),  # Expires end of day
+        status_history=[{
+            "from_status": None,
+            "to_status": "pending",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "changed_by": "system",
+            "changed_by_name": "System",
+            "message": "Transfer request created",
+            "admin_remarks": None,
+            "internal_notes": None
+        }]
     )
 
     db.add(transfer)
@@ -294,54 +305,86 @@ async def update_transfer(
     current_admin = Depends(check_admin_permission("can_approve_transfers"))
 ):
     """Update transfer request (admin only)"""
-    result = await db.execute(select(TransferRequest).where(TransferRequest.id == transfer_id))
-    transfer = result.scalar_one_or_none()
-
-    if not transfer:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Transfer not found"
-        )
-
-    # Track status changes for history
-    old_status = transfer.status
-    new_status = update_data.status
-
-    # Update status history if status is changing
-    if new_status and new_status != old_status:
-        # Add status change to history
-        if not transfer.status_history:
-            transfer.status_history = []
-        
-        transfer.status_history.append({
-            "status": new_status,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "changed_by": str(current_admin.id),
-            "message": update_data.status_message or f"Status changed from {old_status} to {new_status}"
-        })
-
-    # Update fields
-    for field, value in update_data.model_dump(exclude_unset=True).items():
-        if hasattr(transfer, field):
-            setattr(transfer, field, value)
-
-    # Set processed_by for status changes
-    if new_status and new_status != old_status:
-        transfer.processed_by = current_admin.id
-        if new_status == "completed":
-            transfer.completed_at = datetime.now(timezone.utc)
-
-    await db.commit()
-    await db.refresh(transfer)
-
-    # Clear cache
     try:
-        redis_client = await get_redis()
-        await redis_client.delete(f"transfer_status:{transfer.id}")
-    except Exception:
-        pass  # Redis not available
+        # Fetch transfer with user info for admin name
+        result = await db.execute(
+            select(TransferRequest)
+            .options(selectinload(TransferRequest.user))
+            .where(TransferRequest.id == transfer_id)
+        )
+        transfer = result.scalar_one_or_none()
 
-    return BaseResponse.success_response(data=transfer, message="Transfer operation completed successfully")
+        if not transfer:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Transfer not found"
+            )
+
+        # Track status changes for history
+        old_status = transfer.status
+        new_status = update_data.status
+
+        # Initialize status_history as a list if it's None
+        if transfer.status_history is None:
+            transfer.status_history = []
+
+        # Update status history if status is changing
+        if new_status and new_status != old_status:
+            # Create new history entry with proper structure
+            history_entry = {
+                "from_status": old_status,
+                "to_status": new_status,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "changed_by": str(current_admin.id),
+                "changed_by_name": f"{current_admin.first_name} {current_admin.last_name}".strip(),
+                "message": update_data.status_message or f"Status changed from {old_status} to {new_status}",
+                "admin_remarks": update_data.admin_remarks,
+                "internal_notes": update_data.internal_notes
+            }
+            
+            # Create a new list to ensure SQLAlchemy detects the change
+            current_history = list(transfer.status_history) if transfer.status_history else []
+            current_history.append(history_entry)
+            transfer.status_history = current_history
+
+        # Update fields
+        update_dict = update_data.model_dump(exclude_unset=True)
+        for field, value in update_dict.items():
+            if hasattr(transfer, field) and value is not None:
+                setattr(transfer, field, value)
+
+        # Set processed_by and completion time for status changes
+        if new_status and new_status != old_status:
+            transfer.processed_by = current_admin.id
+            if new_status == "completed":
+                transfer.completed_at = datetime.now(timezone.utc)
+
+        # Update the updated_at timestamp
+        transfer.updated_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        await db.refresh(transfer)
+
+        # Clear cache
+        try:
+            redis_client = await get_redis()
+            await redis_client.delete(f"transfer_status:{transfer.id}")
+        except Exception as e:
+            logger.warning(f"Failed to clear cache: {e}")
+
+        logger.info(f"Transfer {transfer_id} updated by admin {current_admin.id}. Status: {old_status} -> {new_status}")
+        
+        return BaseResponse.success_response(data=transfer, message="Transfer updated successfully")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating transfer {transfer_id}: {str(e)}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error while updating transfer"
+        )
 
 # User endpoints (parameterized routes come after specific admin routes)
 @router.get("/", response_model=BaseResponse[List[TransferResponse]])
