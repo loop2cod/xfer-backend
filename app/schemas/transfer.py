@@ -138,3 +138,20 @@ class TransferStats(BaseModel):
     failed_requests: int
     total_volume: float
     total_fees: float
+
+
+class HashVerificationRequest(BaseModel):
+    transaction_hash: str = Field(..., min_length=20, max_length=255, description="Transaction hash from blockchain")
+    wallet_address: str = Field(..., min_length=20, max_length=255, description="Wallet address used for deposit")
+    amount: Decimal = Field(..., gt=0, description="Expected transaction amount")
+    network: Optional[str] = Field(default="TRC20", description="Blockchain network")
+
+
+class HashVerificationResponse(BaseModel):
+    is_valid: bool = Field(..., description="Whether the transaction is valid")
+    confirmations: int = Field(..., ge=0, description="Number of blockchain confirmations")
+    amount: Decimal = Field(..., description="Actual transaction amount")
+    message: str = Field(..., description="Verification result message")
+    network: Optional[str] = Field(None, description="Blockchain network")
+    block_height: Optional[int] = Field(None, description="Block height of transaction")
+    timestamp: Optional[datetime] = Field(None, description="Transaction timestamp")

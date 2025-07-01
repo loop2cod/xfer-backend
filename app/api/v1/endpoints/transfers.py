@@ -20,9 +20,12 @@ from app.schemas.transfer import (
     TransferCreate,
     TransferUpdate,
     TransferResponse,
-    TransferStats
+    TransferStats,
+    HashVerificationRequest,
+    HashVerificationResponse
 )
 from app.services.fee_service import FeeService
+from app.services.blockchain_verification import blockchain_verification_service
 from pydantic import BaseModel, Field
 from app.schemas.base import BaseResponse
 import logging
@@ -39,23 +42,6 @@ class PaginatedTransfersResponse(BaseModel):
     total_pages: int
     has_next: bool
     has_prev: bool
-
-
-class HashVerificationRequest(BaseModel):
-    transaction_hash: str = Field(..., min_length=20, max_length=255, description="Transaction hash from blockchain")
-    wallet_address: str = Field(..., min_length=20, max_length=255, description="Wallet address used for deposit")
-    amount: Decimal = Field(..., gt=0, description="Expected transaction amount")
-    network: Optional[str] = Field(default="TRC20", description="Blockchain network")
-
-
-class HashVerificationResponse(BaseModel):
-    is_valid: bool = Field(..., description="Whether the transaction is valid")
-    confirmations: int = Field(..., ge=0, description="Number of blockchain confirmations")
-    amount: Decimal = Field(..., description="Actual transaction amount")
-    message: str = Field(..., description="Verification result message")
-    network: Optional[str] = Field(None, description="Blockchain network")
-    block_height: Optional[int] = Field(None, description="Block height of transaction")
-    timestamp: Optional[datetime] = Field(None, description="Transaction timestamp")
 
 
 @router.post("/", response_model=BaseResponse[TransferResponse])
@@ -451,7 +437,8 @@ async def get_transfer_status(
         # Try to get from cache first
         cached_status = await redis_client.get(f"transfer_status:{transfer_id}")
         if cached_status:
-            return json.loads(cached_status)
+            cached_data = json.loads(cached_status)
+            return BaseResponse.success_response(data=cached_data, message="Transfer status retrieved successfully")
     except Exception:
         # Redis not available, continue without cache
         pass
@@ -529,17 +516,21 @@ async def get_fee_info(
 @router.post("/verify-hash", response_model=BaseResponse[HashVerificationResponse])
 async def verify_transaction_hash(
     verification_data: HashVerificationRequest,
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    """Verify transaction hash on blockchain with real verification"""
     # Input validation
     if len(verification_data.transaction_hash) < 20:
         return invalid_response("Invalid transaction hash format", verification_data.network)
-    
+
     if len(verification_data.wallet_address) < 20:
         return invalid_response("Invalid wallet address", verification_data.network)
-    
-    # Real verification
-    verification_response = await verify_transaction(verification_data)
+
+    # Real blockchain verification
+    verification_response = await blockchain_verification_service.verify_transaction(
+        verification_data, db
+    )
     return BaseResponse.success_response(
         data=verification_response,
         message="Hash verification completed"
@@ -638,15 +629,3 @@ async def websocket_endpoint(websocket: WebSocket, user_id: UUID):
         pass
 
 
-async def verify_transaction(verification_data: HashVerificationRequest) -> HashVerificationResponse:
-    """Verify transaction hash on blockchain"""
-    # Mock implementation for now - in production this would connect to actual blockchain
-    return HashVerificationResponse(
-        is_valid=True,
-        confirmations=6,
-        amount=verification_data.amount,
-        message=f"Transaction verified successfully on {verification_data.network}",
-        network=verification_data.network,
-        block_height=12345678,
-        timestamp=datetime.now(timezone.utc)
-    )
