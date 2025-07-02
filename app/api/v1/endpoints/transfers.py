@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_, desc, String
 from sqlalchemy.orm import selectinload
@@ -26,6 +26,7 @@ from app.schemas.transfer import (
 )
 from app.services.fee_service import FeeService
 from app.services.blockchain_verification import blockchain_verification_service
+from app.services.user_activity import UserActivityService, ActivityActions, ResourceTypes
 from pydantic import BaseModel, Field
 from app.schemas.base import BaseResponse
 import logging
@@ -47,6 +48,7 @@ class PaginatedTransfersResponse(BaseModel):
 @router.post("/", response_model=BaseResponse[TransferResponse])
 async def create_transfer(
     transfer_data: TransferCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -124,6 +126,27 @@ async def create_transfer(
     db.add(transfer)
     await db.commit()
     await db.refresh(transfer)
+
+    # Log user activity
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
+    await UserActivityService.log_activity(
+        db=db,
+        user_id=current_user.id,
+        action=ActivityActions.TRANSFER_CREATE,
+        resource_type=ResourceTypes.TRANSFER,
+        resource_id=str(transfer.id),
+        details={
+            "transfer_type": transfer_data.type,
+            "amount": str(transfer_data.amount),
+            "currency": transfer_data.currency,
+            "fee_amount": str(fee_amount),
+            "net_amount": str(net_amount)
+        },
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
 
     # Clear any cached status
     try:

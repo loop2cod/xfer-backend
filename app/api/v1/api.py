@@ -1,13 +1,14 @@
 from fastapi import APIRouter
 from app.api.v1.endpoints import (
     auth, users, transfers, wallets, admin, admin_wallets, admin_bank_accounts,
-    fees, purchases, system_settings, audit_logs, financial_reports
+    fees, purchases, system_settings, audit_logs, financial_reports, user_activities
 )
 
 api_router = APIRouter()
 
 api_router.include_router(auth.router, prefix="/auth", tags=["authentication"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
+api_router.include_router(user_activities.router, prefix="/user-activities", tags=["user-activities"])
 api_router.include_router(transfers.router, prefix="/transfers", tags=["transfers"])
 api_router.include_router(wallets.router, prefix="/wallets", tags=["wallets"])
 

@@ -48,14 +48,14 @@ class Admin(Base):
     # Timestamps
     created_at = Column(
         DateTime(timezone=True),
-        server_default=func.now(),  # SQLite will store this as local time
-        default=datetime.now(timezone.utc)  # Python will use UTC if not provided
+        server_default=func.now(),
+        default=lambda: datetime.now(timezone.utc)  # Ensure UTC timezone
     )
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
-        onupdate=datetime.now(timezone.utc),
-        default=datetime.now(timezone.utc)
+        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc)
     )
 
     # Relationships

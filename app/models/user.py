@@ -33,14 +33,14 @@ class User(Base):
     # Timestamps
     created_at = Column(
         DateTime(timezone=True),
-        server_default=func.now(),  # SQLite will store this as local time
-        default=datetime.now(timezone.utc)  # Python will use UTC if not provided
+        server_default=func.now(),
+        default=lambda: datetime.now(timezone.utc)  # Ensure UTC timezone
     )
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
-        onupdate=datetime.now(timezone.utc),
-        default=datetime.now(timezone.utc)
+        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc)
     )
     last_login = Column(DateTime(timezone=True), nullable=True)
     
@@ -48,10 +48,11 @@ class User(Base):
     transfer_requests = relationship("TransferRequest", back_populates="user")
     wallets = relationship("Wallet", back_populates="user")
     notes = relationship("UserNote", back_populates="user")
+    activities = relationship("UserActivity", back_populates="user")
 
     def __repr__(self):
         return f"<User(email='{self.email}', kyc_status='{self.kyc_status}')>"
     
     @staticmethod
     def utcnow():
-        return datetime.utcnow()
+        return datetime.now(timezone.utc)

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -15,6 +15,7 @@ from app.core.security import (
 )
 from app.core.config import settings
 from app.db.database import get_db
+from app.api.deps import get_current_user, get_current_admin
 from app.models.user import User
 from app.models.admin import Admin
 from app.schemas.auth import (
@@ -30,6 +31,8 @@ from app.schemas.admin import AdminLogin
 from app.schemas.base import BaseResponse, MessageResponse
 from app.services.email import email_service
 from app.services.verification import verification_service
+from app.services.user_activity import UserActivityService, ActivityActions, ResourceTypes
+from app.services.audit_log import AuditLogService, AdminAuditActions, AdminResourceTypes
 
 router = APIRouter()
 
@@ -87,7 +90,7 @@ async def register(
     
     return BaseResponse.success_response(data=user, message="User registered successfully")
 @router.post("/login", response_model=BaseResponse[Token])
-async def login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
+async def login(user_data: UserLogin, request: Request, db: AsyncSession = Depends(get_db)):
     """User login"""
     # Find user
     result = await db.execute(select(User).where(User.email == user_data.email))
@@ -113,6 +116,20 @@ async def login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
     user.last_login = datetime.now(timezone.utc)
     await db.commit()
     
+    # Log user activity
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
+    await UserActivityService.log_activity(
+        db=db,
+        user_id=user.id,
+        action=ActivityActions.LOGIN,
+        resource_type=ResourceTypes.AUTH,
+        details={"login_method": "email_password"},
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
+    
     token_data = {
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -122,8 +139,36 @@ async def login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
     return BaseResponse.success_response(data=token_data, message="Login successful")
 
 
+@router.post("/logout", response_model=MessageResponse)
+async def logout(
+    request: Request, 
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """User logout (client-side token removal with activity logging)"""
+    try:
+        # Log logout activity
+        client_ip = request.client.host if request.client else None
+        user_agent = request.headers.get("user-agent")
+        
+        await UserActivityService.log_activity(
+            db=db,
+            user_id=current_user.id,
+            action=ActivityActions.LOGOUT,
+            resource_type=ResourceTypes.AUTH,
+            details={"logout_method": "manual"},
+            ip_address=client_ip,
+            user_agent=user_agent
+        )
+    except Exception as e:
+        # Log the error but don't fail the logout
+        print(f"Failed to log logout activity: {e}")
+    
+    return MessageResponse.success_message("Logged out successfully")
+
+
 @router.post("/admin/login", response_model=BaseResponse[Token])
-async def admin_login(admin_data: AdminLogin, db: AsyncSession = Depends(get_db)):
+async def admin_login(admin_data: AdminLogin, request: Request, db: AsyncSession = Depends(get_db)):
     """Admin login"""
     # Find admin
     result = await db.execute(select(Admin).where(Admin.email == admin_data.email))
@@ -148,6 +193,24 @@ async def admin_login(admin_data: AdminLogin, db: AsyncSession = Depends(get_db)
     # Update last login
     admin.last_login = datetime.now(timezone.utc)
     await db.commit()
+    
+    # Log admin activity
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
+    await AuditLogService.log_admin_activity(
+        db=db,
+        admin_id=admin.id,
+        action=AdminAuditActions.LOGIN,
+        resource_type=AdminResourceTypes.AUTH,
+        details={
+            "login_method": "email_password",
+            "admin_email": admin.email,
+            "admin_role": admin.role
+        },
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
     
     token_data = {
         "access_token": access_token,
@@ -227,8 +290,34 @@ async def refresh_admin_token(refresh_data: RefreshToken, db: AsyncSession = Dep
 
 
 @router.post("/admin/logout", response_model=MessageResponse)
-async def admin_logout():
-    """Admin logout (client-side token removal)"""
+async def admin_logout(
+    request: Request, 
+    db: AsyncSession = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin)
+):
+    """Admin logout (client-side token removal with audit logging)"""
+    try:
+        # Log admin logout activity
+        client_ip = request.client.host if request.client else None
+        user_agent = request.headers.get("user-agent")
+        
+        await AuditLogService.log_admin_activity(
+            db=db,
+            admin_id=current_admin.id,
+            action=AdminAuditActions.LOGOUT,
+            resource_type=AdminResourceTypes.AUTH,
+            details={
+                "logout_method": "manual",
+                "admin_email": current_admin.email,
+                "admin_role": current_admin.role
+            },
+            ip_address=client_ip,
+            user_agent=user_agent
+        )
+    except Exception as e:
+        # Log the error but don't fail the logout
+        print(f"Failed to log admin logout activity: {e}")
+    
     return MessageResponse.success_message("Admin logged out successfully")
 
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, case
 from typing import List
@@ -11,6 +11,7 @@ from app.models.user_note import UserNote
 from app.models.admin import Admin
 from app.schemas.user import UserResponse, UserUpdate, UserProfile, UserAdminResponse
 from app.schemas.base import BaseResponse, MessageResponse
+from app.services.user_activity import UserActivityService, ActivityActions, ResourceTypes
 from pydantic import BaseModel
 from datetime import datetime, timezone
 
@@ -177,18 +178,40 @@ async def get_dashboard_data(
 @router.put("/me", response_model=BaseResponse[UserResponse])
 async def update_current_user(
     user_update: UserUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Update current user profile"""
     
+    # Track what fields are being updated
+    updated_fields = user_update.dict(exclude_unset=True)
+    
     # Update fields
-    for field, value in user_update.dict(exclude_unset=True).items():
+    for field, value in updated_fields.items():
         if field != "is_active":  # Users can't change their active status
             setattr(current_user, field, value)
     
     await db.commit()
     await db.refresh(current_user)
+    
+    # Log user activity
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    
+    await UserActivityService.log_activity(
+        db=db,
+        user_id=current_user.id,
+        action=ActivityActions.PROFILE_UPDATE,
+        resource_type=ResourceTypes.USER,
+        resource_id=str(current_user.id),
+        details={
+            "updated_fields": list(updated_fields.keys()),
+            "field_count": len(updated_fields)
+        },
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
     
     return BaseResponse.success_response(data=current_user, message="User profile updated successfully")
 
