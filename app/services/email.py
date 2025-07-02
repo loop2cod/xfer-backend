@@ -19,6 +19,13 @@ class EmailService:
         self.password = settings.SMTP_PASSWORD
         self.from_email = settings.SMTP_FROM_EMAIL or settings.SMTP_USERNAME
         self.from_name = settings.SMTP_FROM_NAME
+        
+        # Debug logging
+        logger.info(f"Email service initialized with server: {self.smtp_server}, port: {self.smtp_port}")
+        if self.username:
+            logger.info(f"Using username: {self.username}")
+        else:
+            logger.warning("No SMTP username configured")
 
     async def send_email(
         self,
@@ -48,35 +55,48 @@ class EmailService:
             html_part = MIMEText(html_content, "html")
             message.attach(html_part)
 
-            # Try multiple SSL approaches for maximum compatibility
-            success = False
-            last_error = None
-            
-            # Approach 1: Default SSL context (most secure)
-            try:
-                context = ssl.create_default_context()
-                await aiosmtplib.send(
-                    message,
-                    hostname=self.smtp_server,
-                    port=self.smtp_port,
-                    start_tls=True,
-                    username=self.username,
-                    password=self.password,
-                    tls_context=context,
-                    validate_certs=True,
-                )
-                success = True
-            except ssl.SSLError as e:
-                last_error = e
-                logger.warning(f"SSL approach 1 failed: {e}")
-            
-            # Approach 2: Less strict SSL context
-            if not success:
+            # Configure SSL context based on port
+            if self.smtp_port == 465:
+                # Port 465 uses direct SSL connection
                 try:
                     context = ssl.create_default_context()
-                    context.check_hostname = False
-                    context.verify_mode = ssl.CERT_NONE
-                    
+                    await aiosmtplib.send(
+                        message,
+                        hostname=self.smtp_server,
+                        port=self.smtp_port,
+                        use_tls=True,
+                        username=self.username,
+                        password=self.password,
+                        tls_context=context,
+                    )
+                    logger.info(f"Email sent successfully to {to_email} using SSL (port 465)")
+                    return True
+                except Exception as e:
+                    logger.warning(f"SSL connection failed, trying with relaxed SSL: {e}")
+                    # Fallback with relaxed SSL - catch all exceptions, not just SSLError
+                    try:
+                        context = ssl.create_default_context()
+                        context.check_hostname = False
+                        context.verify_mode = ssl.CERT_NONE
+                        
+                        await aiosmtplib.send(
+                            message,
+                            hostname=self.smtp_server,
+                            port=self.smtp_port,
+                            use_tls=True,
+                            username=self.username,
+                            password=self.password,
+                            tls_context=context,
+                        )
+                        logger.warning(f"Email sent successfully to {to_email} using relaxed SSL (port 465)")
+                        return True
+                    except Exception as e:
+                        logger.error(f"Failed to send email using SSL (port 465): {e}")
+                        return False
+            else:
+                # Port 587 uses STARTTLS
+                try:
+                    context = ssl.create_default_context()
                     await aiosmtplib.send(
                         message,
                         hostname=self.smtp_server,
@@ -85,33 +105,31 @@ class EmailService:
                         username=self.username,
                         password=self.password,
                         tls_context=context,
-                        validate_certs=False,
                     )
-                    success = True
-                    logger.warning("Using less secure SSL context due to certificate issues")
+                    logger.info(f"Email sent successfully to {to_email} using STARTTLS (port 587)")
+                    return True
                 except Exception as e:
-                    last_error = e
-            
-            # Approach 3: Basic STARTTLS without custom context
-            if not success:
-                try:
-                    await aiosmtplib.send(
-                        message,
-                        hostname=self.smtp_server,
-                        port=self.smtp_port,
-                        start_tls=True,
-                        username=self.username,
-                        password=self.password,
-                    )
-                    success = True
-                except Exception as e:
-                    last_error = e
-            
-            if not success:
-                raise last_error
-
-            logger.info(f"Email sent successfully to {to_email}")
-            return True
+                    logger.warning(f"STARTTLS connection failed, trying with relaxed SSL: {e}")
+                    # Fallback with relaxed SSL - catch all exceptions, not just SSLError
+                    try:
+                        context = ssl.create_default_context()
+                        context.check_hostname = False
+                        context.verify_mode = ssl.CERT_NONE
+                        
+                        await aiosmtplib.send(
+                            message,
+                            hostname=self.smtp_server,
+                            port=self.smtp_port,
+                            start_tls=True,
+                            username=self.username,
+                            password=self.password,
+                            tls_context=context,
+                        )
+                        logger.warning(f"Email sent successfully to {to_email} using relaxed STARTTLS")
+                        return True
+                    except Exception as e:
+                        logger.error(f"Failed to send email using STARTTLS: {e}")
+                        return False
 
         except Exception as e:
             logger.error(f"Failed to send email to {to_email}: {str(e)}")
@@ -119,7 +137,7 @@ class EmailService:
 
     async def send_verification_email(self, to_email: str, verification_code: str) -> bool:
         """Send verification code email with professional HTML template"""
-        subject = "Verify Your Email - Xfer"
+        subject = "Verify Your Email - LTSND"
     
         html_template = """
     <!DOCTYPE html>
@@ -127,18 +145,18 @@ class EmailService:
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Email Verification - Xfer</title>
+        <title>Email Verification - LTSND</title>
     </head>
     <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; line-height: 1.6;">
         <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
             <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 30px; text-align: center;">
-                <h1 style="color: #ffffff; font-size: 32px; font-weight: bold; margin: 0; letter-spacing: 2px;">XFER</h1>
+                <h1 style="color: #ffffff; font-size: 32px; font-weight: bold; margin: 0; letter-spacing: 2px;">LTSND</h1>
             </div>
             
             <div style="padding: 40px 30px; text-align: center;">
                 <h2 style="font-size: 24px; color: #2d3748; margin-bottom: 20px; font-weight: 600;">Welcome to Xfer!</h2>
                 <p style="font-size: 16px; color: #4a5568; margin-bottom: 30px; line-height: 1.5;">
-                    Thank you for choosing Xfer for your financial transfers. To complete your account setup, 
+                    Thank you for choosing LETSND for your financial transfers. To complete your account setup, 
                     please verify your email address using the verification code below.
                 </p>
                 
@@ -152,7 +170,7 @@ class EmailService:
                 </div>
                 
                 <div style="background-color: #ebf8ff; color: #2c5282; padding: 15px; border-radius: 8px; font-size: 8px; margin: 20px 0; border-left: 4px solid #4299e1;">
-                    🛡️ <strong>Security Tip:</strong> Never share this code with anyone. Xfer will never ask for your verification code via phone or email.
+                    🛡️ <strong>Security Tip:</strong> Never share this code with anyone. LETSND will never ask for your verification code via phone or email.
                 </div>
                 
                 <p style="font-size: 6px; color: #4a5568; margin-bottom: 30px; line-height: 1.5;">

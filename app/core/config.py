@@ -35,12 +35,12 @@ class Settings(BaseSettings):
     BSC_RPC_URL: Optional[str] = "https://bsc-dataseed.binance.org/"
     
     # Email Configuration
-    SMTP_SERVER: str = "smtp.gmail.com"
-    SMTP_PORT: int = 587
+    SMTP_SERVER: str = "smtp.zoho.in"
+    SMTP_PORT: int = 465
     SMTP_USERNAME: Optional[str] = None  # Your Gmail address
     SMTP_PASSWORD: Optional[str] = None  # Your Gmail App Password
     SMTP_FROM_EMAIL: Optional[str] = None  # Email to send from (usually same as username)
-    SMTP_FROM_NAME: str = "Xfer"
+    SMTP_FROM_NAME: str = "LETSND"
     
     # Celery Configuration
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"

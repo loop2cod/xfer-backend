@@ -7,7 +7,7 @@ from app.api.deps import get_current_user, get_current_admin, check_admin_permis
 from app.db.database import get_db
 from app.models.user import User
 from app.models.transfer import TransferRequest
-from app.schemas.user import UserResponse, UserUpdate, UserProfile
+from app.schemas.user import UserResponse, UserUpdate, UserProfile, UserAdminResponse
 from app.schemas.base import BaseResponse, MessageResponse
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -58,8 +58,8 @@ async def get_current_user_profile(
     stats_result = await db.execute(
         select(
             func.count(TransferRequest.id).label("total_transfers"),
-            func.coalesce(func.sum(TransferRequest.amount), 0).label("total_volume"),
-            func.count().filter(TransferRequest.status == "pending").label("pending_transfers")
+            func.coalesce(func.sum(case((TransferRequest.status == 'completed', TransferRequest.amount), else_=0)), 0).label("total_volume"),
+            func.sum(case((TransferRequest.status == 'pending', 1), else_=0)).label("pending_transfers")
         ).where(TransferRequest.user_id == current_user.id)
     )
     stats = stats_result.first()
@@ -238,6 +238,29 @@ async def get_all_users(
     result = await db.execute(query)
     users = result.scalars().all()
 
+    # Calculate transfer statistics for each user
+    user_responses = []
+    for user in users:
+        # Get transfer statistics for this user
+        transfer_stats_query = select(
+            func.count(TransferRequest.id).label('total_requests'),
+            func.coalesce(func.sum(case((TransferRequest.status == 'completed', TransferRequest.amount), else_=0)), 0).label('total_volume'),
+            func.sum(case((TransferRequest.status == 'completed', 1), else_=0)).label('completed_requests'),
+            func.sum(case((TransferRequest.status == 'pending', 1), else_=0)).label('pending_requests')
+        ).where(TransferRequest.user_id == user.id)
+
+        stats_result = await db.execute(transfer_stats_query)
+        stats = stats_result.first()
+
+        # Create user response with statistics
+        user_data = UserAdminResponse.model_validate(user)
+        user_data.total_requests = stats.total_requests or 0
+        user_data.total_volume = float(stats.total_volume or 0)
+        user_data.completed_requests = stats.completed_requests or 0
+        user_data.pending_requests = stats.pending_requests or 0
+
+        user_responses.append(user_data)
+
     # Calculate pagination info
     total_pages = (total_count + limit - 1) // limit
     current_page = (skip // limit) + 1
@@ -246,7 +269,7 @@ async def get_all_users(
 
     return BaseResponse.success_response(
         data={
-            "users": users,
+            "users": user_responses,
             "total_count": total_count,
             "page": current_page,
             "page_size": limit,
@@ -279,28 +302,17 @@ async def get_user_by_id(
     stats_result = await db.execute(
         select(
             func.count(TransferRequest.id).label("total_transfers"),
-            func.coalesce(func.sum(TransferRequest.amount), 0).label("total_volume"),
-            func.count().filter(TransferRequest.status == "pending").label("pending_transfers")
+            func.coalesce(func.sum(case((TransferRequest.status == 'completed', TransferRequest.amount), else_=0)), 0).label("total_volume"),
+            func.sum(case((TransferRequest.status == 'pending', 1), else_=0)).label("pending_transfers")
         ).where(TransferRequest.user_id == user.id)
     )
     stats = stats_result.first()
-    
-    user_profile = UserProfile(
-        id=user.id,
-        email=user.email,
-        first_name=user.first_name,
-        last_name=user.last_name,
-        phone=user.phone,
-        kyc_status=user.kyc_status,
-        is_active=user.is_active,
-        is_verified=user.is_verified,
-        created_at=user.created_at,
-        updated_at=user.updated_at,
-        last_login=user.last_login,
-        total_transfers=stats.total_transfers or 0,
-        total_volume=float(stats.total_volume or 0),
-        pending_transfers=stats.pending_transfers or 0
-    )
+
+    # Create user profile using model_validate
+    user_profile = UserProfile.model_validate(user)
+    user_profile.total_transfers = stats.total_transfers or 0
+    user_profile.total_volume = float(stats.total_volume or 0)
+    user_profile.pending_transfers = stats.pending_transfers or 0
     
     return BaseResponse.success_response(data=user_profile, message="User retrieved successfully")
 

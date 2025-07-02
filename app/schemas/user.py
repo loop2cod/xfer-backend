@@ -54,7 +54,21 @@ class UserProfile(UserResponse):
     total_transfers: int = 0
     total_volume: float = 0.0
     pending_transfers: int = 0
-    
+
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v.tzinfo else v.replace(tzinfo=timezone.utc).isoformat()
+        }
+
+
+class UserAdminResponse(UserResponse):
+    """Extended user response for admin listing with transfer statistics"""
+    total_requests: int = 0
+    total_volume: float = 0.0
+    completed_requests: int = 0
+    pending_requests: int = 0
+
     class Config:
         from_attributes = True
         json_encoders = {
