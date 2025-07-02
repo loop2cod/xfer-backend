@@ -373,7 +373,7 @@ async def update_transfer(
         )
 
 # User endpoints (parameterized routes come after specific admin routes)
-@router.get("/", response_model=BaseResponse[List[TransferResponse]])
+@router.get("/", response_model=BaseResponse[PaginatedTransfersResponse])
 async def get_user_transfers(
     skip: int = 0,
     limit: int = 20,
@@ -382,21 +382,47 @@ async def get_user_transfers(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get user's transfer requests"""
-    query = select(TransferRequest).where(TransferRequest.user_id == current_user.id)
-    
+    """Get user's transfer requests with pagination"""
+    base_query = select(TransferRequest).where(TransferRequest.user_id == current_user.id)
+
     if type_filter:
-        query = query.where(TransferRequest.type_ == type_filter)
-    
+        base_query = base_query.where(TransferRequest.type_ == type_filter)
+
     if status_filter:
-        query = query.where(TransferRequest.status == status_filter)
-    
-    query = query.order_by(TransferRequest.created_at.desc()).offset(skip).limit(limit)
-    
+        base_query = base_query.where(TransferRequest.status == status_filter)
+
+    # Get total count
+    count_query = select(func.count(TransferRequest.id)).where(TransferRequest.user_id == current_user.id)
+    if type_filter:
+        count_query = count_query.where(TransferRequest.type_ == type_filter)
+    if status_filter:
+        count_query = count_query.where(TransferRequest.status == status_filter)
+
+    total_result = await db.execute(count_query)
+    total_count = total_result.scalar() or 0
+
+    # Get transfers with pagination
+    query = base_query.order_by(TransferRequest.created_at.desc()).offset(skip).limit(limit)
     result = await db.execute(query)
     transfers = result.scalars().all()
-    
-    return BaseResponse.success_response(data=transfers, message="Transfers retrieved successfully")
+
+    # Calculate pagination info
+    page = (skip // limit) + 1
+    total_pages = (total_count + limit - 1) // limit
+    has_next = skip + limit < total_count
+    has_prev = skip > 0
+
+    response_data = PaginatedTransfersResponse(
+        transfers=transfers,
+        total_count=total_count,
+        page=page,
+        page_size=limit,
+        total_pages=total_pages,
+        has_next=has_next,
+        has_prev=has_prev
+    )
+
+    return BaseResponse.success_response(data=response_data, message="Transfers retrieved successfully")
 
 
 @router.get("/{transfer_id}", response_model=BaseResponse[TransferResponse])

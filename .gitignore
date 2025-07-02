@@ -15,4 +15,4 @@ logs/
 
 # DB
 db/
-.db
+xfer.db
