@@ -7,6 +7,8 @@ from app.api.deps import get_current_user, get_current_admin, check_admin_permis
 from app.db.database import get_db
 from app.models.user import User
 from app.models.transfer import TransferRequest
+from app.models.user_note import UserNote
+from app.models.admin import Admin
 from app.schemas.user import UserResponse, UserUpdate, UserProfile, UserAdminResponse
 from app.schemas.base import BaseResponse, MessageResponse
 from pydantic import BaseModel
@@ -303,7 +305,9 @@ async def get_user_by_id(
         select(
             func.count(TransferRequest.id).label("total_transfers"),
             func.coalesce(func.sum(case((TransferRequest.status == 'completed', TransferRequest.amount), else_=0)), 0).label("total_volume"),
-            func.sum(case((TransferRequest.status == 'pending', 1), else_=0)).label("pending_transfers")
+            func.sum(case((TransferRequest.status == 'pending', 1), else_=0)).label("pending_transfers"),
+            func.sum(case((TransferRequest.status == 'completed', 1), else_=0)).label("completed_transfers"),
+            func.sum(case((TransferRequest.status == 'failed', 1), else_=0)).label("failed_transfers")
         ).where(TransferRequest.user_id == user.id)
     )
     stats = stats_result.first()
@@ -313,6 +317,8 @@ async def get_user_by_id(
     user_profile.total_transfers = stats.total_transfers or 0
     user_profile.total_volume = float(stats.total_volume or 0)
     user_profile.pending_transfers = stats.pending_transfers or 0
+    user_profile.completed_transfers = stats.completed_transfers or 0
+    user_profile.failed_transfers = stats.failed_transfers or 0
     
     return BaseResponse.success_response(data=user_profile, message="User retrieved successfully")
 
@@ -406,6 +412,96 @@ async def update_user_kyc(
     return BaseResponse.success_response(data=user, message="User KYC status updated successfully")
 
 
+@router.get("/admin/{user_id}/transfers", response_model=BaseResponse[dict])
+async def get_user_transfers_admin(
+    user_id: str,
+    skip: int = 0,
+    limit: int = 20,
+    type_filter: str = None,
+    status_filter: str = None,
+    db: AsyncSession = Depends(get_db),
+    current_admin = Depends(check_admin_permission("can_manage_users"))
+):
+    """Get user's transfer requests (admin only)"""
+    
+    try:
+        # Verify user exists
+        user_result = await db.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one_or_none()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Build base queries
+        base_query = select(TransferRequest).where(TransferRequest.user_id == user_id)
+        count_query = select(func.count(TransferRequest.id)).where(TransferRequest.user_id == user_id)
+
+        # Apply filters
+        if type_filter:
+            base_query = base_query.where(TransferRequest.type_ == type_filter)
+            count_query = count_query.where(TransferRequest.type_ == type_filter)
+
+        if status_filter:
+            base_query = base_query.where(TransferRequest.status == status_filter)
+            count_query = count_query.where(TransferRequest.status == status_filter)
+
+        # Get total count
+        total_result = await db.execute(count_query)
+        total_count = total_result.scalar() or 0
+
+        # Get transfers with pagination
+        query = base_query.order_by(TransferRequest.created_at.desc()).offset(skip).limit(limit)
+        result = await db.execute(query)
+        transfers = result.scalars().all()
+
+        # Convert transfers to dict format for JSON serialization
+        transfers_data = []
+        for transfer in transfers:
+            transfer_dict = {
+                "id": str(transfer.id),
+                "transfer_id": str(transfer.transfer_id) if transfer.transfer_id else str(transfer.id),
+                "user_id": str(transfer.user_id),
+                "amount": str(transfer.amount),
+                "currency": transfer.currency,
+                "status": transfer.status,
+                "type_": transfer.type_,
+                "transfer_type": transfer.type_,  # Alias for frontend compatibility
+                "created_at": transfer.created_at.isoformat() if transfer.created_at else None,
+                "updated_at": transfer.updated_at.isoformat() if transfer.updated_at else None,
+                "completed_at": transfer.completed_at.isoformat() if transfer.completed_at else None,
+            }
+            transfers_data.append(transfer_dict)
+
+        # Calculate pagination info
+        page = (skip // limit) + 1 if limit > 0 else 1
+        total_pages = (total_count + limit - 1) // limit if limit > 0 else 1
+        has_next = skip + limit < total_count
+        has_prev = skip > 0
+
+        return BaseResponse.success_response(
+            data={
+                "transfers": transfers_data,
+                "total_count": total_count,
+                "page": page,
+                "page_size": limit,
+                "total_pages": total_pages,
+                "has_next": has_next,
+                "has_prev": has_prev
+            },
+            message="User transfers retrieved successfully"
+        )
+    
+    except Exception as e:
+        print(f"Error in get_user_transfers_admin: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
 @router.put("/admin/{user_id}/kyc/{status}", response_model=MessageResponse)
 async def update_user_kyc_status(
     user_id: str,
@@ -438,3 +534,102 @@ async def update_user_kyc_status(
     await db.commit()
     
     return MessageResponse.success_message(f"KYC status updated to {status}")
+
+
+# User Notes endpoints
+class UserNoteCreate(BaseModel):
+    note: str
+
+class UserNoteResponse(BaseModel):
+    id: str
+    note: str
+    created_by: str
+    created_by_name: str
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+@router.get("/admin/{user_id}/notes", response_model=BaseResponse[List[UserNoteResponse]])
+async def get_user_notes(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_admin = Depends(check_admin_permission("can_manage_users"))
+):
+    """Get user notes (admin only)"""
+    
+    # Verify user exists
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Get notes with admin info
+    query = select(UserNote, Admin.first_name, Admin.last_name).join(
+        Admin, UserNote.admin_id == Admin.id
+    ).where(UserNote.user_id == user_id).order_by(UserNote.created_at.desc())
+    
+    result = await db.execute(query)
+    notes_data = result.all()
+    
+    notes = []
+    for note, admin_first_name, admin_last_name in notes_data:
+        note_response = UserNoteResponse(
+            id=str(note.id),
+            note=note.note,
+            created_by=str(note.admin_id),
+            created_by_name=f"{admin_first_name} {admin_last_name}".strip(),
+            created_at=note.created_at
+        )
+        notes.append(note_response)
+    
+    return BaseResponse.success_response(data=notes, message="User notes retrieved successfully")
+
+
+@router.post("/admin/{user_id}/notes", response_model=BaseResponse[UserNoteResponse])
+async def add_user_note(
+    user_id: str,
+    note_data: UserNoteCreate,
+    db: AsyncSession = Depends(get_db),
+    current_admin = Depends(check_admin_permission("can_manage_users"))
+):
+    """Add user note (admin only)"""
+    
+    # Verify user exists
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Create note
+    new_note = UserNote(
+        user_id=user_id,
+        admin_id=current_admin.id,
+        note=note_data.note
+    )
+    
+    db.add(new_note)
+    await db.commit()
+    await db.refresh(new_note)
+    
+    # Get admin info for response
+    admin_name = f"{current_admin.first_name} {current_admin.last_name}".strip()
+    
+    note_response = UserNoteResponse(
+        id=str(new_note.id),
+        note=new_note.note,
+        created_by=str(new_note.admin_id),
+        created_by_name=admin_name,
+        created_at=new_note.created_at
+    )
+    
+    return BaseResponse.success_response(data=note_response, message="Note added successfully")

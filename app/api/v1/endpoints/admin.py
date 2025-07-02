@@ -94,10 +94,13 @@ async def get_all_admins(
     """Get all admins (super admin only)"""
     
     query = select(Admin)
-    
+
+    # Exclude admin@example.com
+    query = query.where(Admin.email != "admin@example.com")
+
     if role:
         query = query.where(Admin.role == role)
-    
+
     if is_active is not None:
         query = query.where(Admin.is_active == is_active)
     

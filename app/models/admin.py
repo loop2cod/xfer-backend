@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, DateTime, Boolean, Text, JSON
 from sqlalchemy.sql import func
-# from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship
 import uuid
 from app.db.database import Base
 from app.core.database_types import UUIDType
@@ -60,6 +60,7 @@ class Admin(Base):
 
     # Relationships
     # audit_logs = relationship("AuditLog", back_populates="admin")  # Commented out to avoid circular import
+    user_notes = relationship("UserNote", back_populates="admin")
 
     def __repr__(self):
         return f"<Admin(email='{self.email}', role='{self.role}')>"

@@ -54,6 +54,8 @@ class UserProfile(UserResponse):
     total_transfers: int = 0
     total_volume: float = 0.0
     pending_transfers: int = 0
+    completed_transfers: int = 0
+    failed_transfers: int = 0
 
     class Config:
         from_attributes = True

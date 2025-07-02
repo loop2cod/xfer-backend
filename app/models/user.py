@@ -47,6 +47,7 @@ class User(Base):
     # Relationships
     transfer_requests = relationship("TransferRequest", back_populates="user")
     wallets = relationship("Wallet", back_populates="user")
+    notes = relationship("UserNote", back_populates="user")
 
     def __repr__(self):
         return f"<User(email='{self.email}', kyc_status='{self.kyc_status}')>"
