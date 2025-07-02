@@ -192,7 +192,7 @@ async def update_current_user(
 
 
 # Admin endpoints
-@router.get("/admin/all", response_model=BaseResponse[List[UserResponse]])
+@router.get("/admin/all", response_model=BaseResponse[dict])
 async def get_all_users(
     skip: int = 0,
     limit: int = 50,
@@ -202,29 +202,60 @@ async def get_all_users(
     db: AsyncSession = Depends(get_db),
     current_admin = Depends(check_admin_permission("can_manage_users"))
 ):
-    """Get all users (admin only)"""
-    
-    query = select(User)
-    
+    """Get all users with pagination (admin only)"""
+
+    base_query = select(User)
+    count_query = select(func.count(User.id))
+
+    # Apply filters
+    filters = []
+
     if search:
-        query = query.where(
+        search_filter = (
             User.email.ilike(f"%{search}%") |
             User.first_name.ilike(f"%{search}%") |
             User.last_name.ilike(f"%{search}%")
         )
-    
+        filters.append(search_filter)
+
     if kyc_status:
-        query = query.where(User.kyc_status == kyc_status)
-    
+        filters.append(User.kyc_status == kyc_status)
+
     if is_active is not None:
-        query = query.where(User.is_active == is_active)
-    
-    query = query.order_by(User.created_at.desc()).offset(skip).limit(limit)
-    
+        filters.append(User.is_active == is_active)
+
+    if filters:
+        base_query = base_query.where(*filters)
+        count_query = count_query.where(*filters)
+
+    # Get total count
+    total_result = await db.execute(count_query)
+    total_count = total_result.scalar()
+
+    # Apply pagination and ordering
+    query = base_query.order_by(User.created_at.desc()).offset(skip).limit(limit)
+
     result = await db.execute(query)
     users = result.scalars().all()
-    
-    return BaseResponse.success_response(data=users, message="Users retrieved successfully")
+
+    # Calculate pagination info
+    total_pages = (total_count + limit - 1) // limit
+    current_page = (skip // limit) + 1
+    has_next = skip + limit < total_count
+    has_prev = skip > 0
+
+    return BaseResponse.success_response(
+        data={
+            "users": users,
+            "total_count": total_count,
+            "page": current_page,
+            "page_size": limit,
+            "total_pages": total_pages,
+            "has_next": has_next,
+            "has_prev": has_prev
+        },
+        message="Users retrieved successfully"
+    )
 
 
 @router.get("/admin/{user_id}", response_model=BaseResponse[UserProfile])
@@ -300,6 +331,67 @@ async def update_user(
     await db.refresh(user)
     
     return BaseResponse.success_response(data=user, message="User operation completed successfully")
+
+
+@router.put("/admin/{user_id}/status", response_model=BaseResponse[UserResponse])
+async def update_user_status(
+    user_id: str,
+    status_data: dict,
+    db: AsyncSession = Depends(get_db),
+    current_admin = Depends(check_admin_permission("can_manage_users"))
+):
+    """Update user status (admin only)"""
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Update status
+    if "is_active" in status_data:
+        user.is_active = status_data["is_active"]
+
+    await db.commit()
+    await db.refresh(user)
+
+    return BaseResponse.success_response(data=user, message="User status updated successfully")
+
+
+@router.put("/admin/{user_id}/kyc", response_model=BaseResponse[UserResponse])
+async def update_user_kyc(
+    user_id: str,
+    kyc_data: dict,
+    db: AsyncSession = Depends(get_db),
+    current_admin = Depends(check_admin_permission("can_manage_users"))
+):
+    """Update user KYC status (admin only)"""
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Update KYC status
+    if "kyc_status" in kyc_data:
+        user.kyc_status = kyc_data["kyc_status"]
+
+    # Add notes if provided
+    if "notes" in kyc_data:
+        # You might want to store this in a separate notes table
+        pass
+
+    await db.commit()
+    await db.refresh(user)
+
+    return BaseResponse.success_response(data=user, message="User KYC status updated successfully")
 
 
 @router.put("/admin/{user_id}/kyc/{status}", response_model=MessageResponse)

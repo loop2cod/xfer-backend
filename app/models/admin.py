@@ -1,5 +1,6 @@
 from sqlalchemy import Column, String, DateTime, Boolean, Text, JSON
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 import uuid
 from app.db.database import Base
 from app.core.database_types import UUIDType
@@ -57,9 +58,12 @@ class Admin(Base):
         default=datetime.now(timezone.utc)
     )
 
+    # Relationships
+    audit_logs = relationship("AuditLog", back_populates="admin")
+
     def __repr__(self):
         return f"<Admin(email='{self.email}', role='{self.role}')>"
-    
+
     @staticmethod
     def utcnow():
-        return datetime.utcnow()
+        return datetime.now(timezone.utc)
