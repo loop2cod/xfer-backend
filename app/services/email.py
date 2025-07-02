@@ -154,7 +154,7 @@ class EmailService:
             </div>
             
             <div style="padding: 40px 30px; text-align: center;">
-                <h2 style="font-size: 24px; color: #2d3748; margin-bottom: 20px; font-weight: 600;">Welcome to Xfer!</h2>
+                <h2 style="font-size: 24px; color: #2d3748; margin-bottom: 20px; font-weight: 600;">Welcome to LETSND!</h2>
                 <p style="font-size: 16px; color: #4a5568; margin-bottom: 30px; line-height: 1.5;">
                     Thank you for choosing LETSND for your financial transfers. To complete your account setup, 
                     please verify your email address using the verification code below.
