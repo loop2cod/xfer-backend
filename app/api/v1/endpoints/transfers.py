@@ -27,6 +27,7 @@ from app.schemas.transfer import (
 from app.services.fee_service import FeeService
 from app.services.blockchain_verification import blockchain_verification_service
 from app.services.user_activity import UserActivityService, ActivityActions, ResourceTypes
+from app.services.audit_logger import audit_update, AuditLogger
 from pydantic import BaseModel, Field
 from app.schemas.base import BaseResponse
 import logging
@@ -307,9 +308,11 @@ async def get_transfer_by_id(
     return BaseResponse.success_response(data=transfer, message="Transfer retrieved successfully")
 
 @router.put("/admin/{transfer_id}", response_model=BaseResponse[TransferResponse])
+@audit_update("transfer_request", "transfer_id")
 async def update_transfer(
     transfer_id: UUID,
     update_data: TransferUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_admin = Depends(check_admin_permission("can_approve_transfers"))
 ):

@@ -12,6 +12,7 @@ from app.models.admin import Admin
 from app.schemas.user import UserResponse, UserUpdate, UserProfile, UserAdminResponse
 from app.schemas.base import BaseResponse, MessageResponse
 from app.services.user_activity import UserActivityService, ActivityActions, ResourceTypes
+from app.services.audit_logger import audit_update, AuditLogger
 from pydantic import BaseModel
 from datetime import datetime, timezone
 
@@ -347,9 +348,11 @@ async def get_user_by_id(
 
 
 @router.put("/admin/{user_id}", response_model=BaseResponse[UserResponse])
+@audit_update("user", "user_id")
 async def update_user(
     user_id: str,
     user_update: UserUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_admin = Depends(check_admin_permission("can_manage_users"))
 ):
@@ -375,9 +378,11 @@ async def update_user(
 
 
 @router.put("/admin/{user_id}/status", response_model=BaseResponse[UserResponse])
+@audit_update("user", "user_id")
 async def update_user_status(
     user_id: str,
     status_data: dict,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_admin = Depends(check_admin_permission("can_manage_users"))
 ):

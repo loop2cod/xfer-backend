@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import List, Optional
@@ -14,6 +14,7 @@ from app.models.wallet import Wallet
 from app.schemas.admin import AdminCreate, AdminUpdate, AdminResponse, AdminPermissionUpdate, AdminRolePermissions, DEFAULT_PERMISSIONS
 from app.schemas.base import BaseResponse, MessageResponse
 from app.core.security import get_password_hash, generate_api_key
+from app.services.audit_logger import audit_create, audit_update, audit_delete, AuditLogger
 
 router = APIRouter()
 
@@ -113,8 +114,10 @@ async def get_all_admins(
 
 
 @router.post("/", response_model=BaseResponse[AdminResponse])
+@audit_create("admin")
 async def create_admin(
     admin_data: AdminCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_admin: Admin = Depends(get_super_admin)
 ):
@@ -152,7 +155,7 @@ async def create_admin(
     return BaseResponse.success_response(data=admin, message="Admin operation completed successfully")
 
 
-@router.get("/{admin_id}", response_model=BaseResponse[AdminResponse])
+@router.get("/profile/{admin_id}", response_model=BaseResponse[AdminResponse])
 async def get_admin(
     admin_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -172,10 +175,12 @@ async def get_admin(
     return BaseResponse.success_response(data=admin, message="Admin operation completed successfully")
 
 
-@router.put("/{admin_id}", response_model=BaseResponse[AdminResponse])
+@router.put("/profile/{admin_id}", response_model=BaseResponse[AdminResponse])
+@audit_update("admin", "admin_id")
 async def update_admin(
     admin_id: UUID,
     admin_update: AdminUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_admin: Admin = Depends(get_super_admin)
 ):
@@ -207,9 +212,11 @@ async def update_admin(
     return BaseResponse.success_response(data=admin, message="Admin operation completed successfully")
 
 
-@router.delete("/{admin_id}", response_model=MessageResponse)
+@router.delete("/profile/{admin_id}", response_model=MessageResponse)
+@audit_delete("admin", "admin_id")
 async def delete_admin(
     admin_id: UUID,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_admin: Admin = Depends(get_super_admin)
 ):
@@ -335,7 +342,7 @@ async def get_role_permissions(
     return BaseResponse.success_response(data=roles_data, message="Role permissions retrieved successfully")
 
 
-@router.put("/{admin_id}/permissions", response_model=BaseResponse[AdminResponse])
+@router.put("/profile/{admin_id}/permissions", response_model=BaseResponse[AdminResponse])
 async def update_admin_permissions(
     admin_id: UUID,
     permission_update: AdminPermissionUpdate,
@@ -368,7 +375,7 @@ async def update_admin_permissions(
     return BaseResponse.success_response(data=admin, message="Admin permissions updated successfully")
 
 
-@router.post("/{admin_id}/toggle-status", response_model=BaseResponse[AdminResponse])
+@router.post("/profile/{admin_id}/toggle-status", response_model=BaseResponse[AdminResponse])
 async def toggle_admin_status(
     admin_id: UUID,
     db: AsyncSession = Depends(get_db),

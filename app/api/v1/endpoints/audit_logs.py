@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from app.api.deps import get_current_admin, check_admin_permission
@@ -11,6 +11,7 @@ from app.models.audit_log import AuditLog
 from app.models.admin import Admin
 from app.schemas.audit_log import AuditLogResponse, AuditLogCreate
 from app.schemas.base import BaseResponse
+from app.services.audit_log import AuditLogService
 
 router = APIRouter()
 
@@ -90,7 +91,52 @@ async def get_audit_logs(
     query = query.order_by(AuditLog.created_at.desc()).offset(skip).limit(limit)
     
     result = await db.execute(query)
-    logs = result.scalars().all()
+    audit_logs = result.scalars().all()
+    
+    # Convert to response format with admin info
+    logs = []
+    for log in audit_logs:
+        admin_result = await db.execute(select(Admin).where(Admin.id == log.admin_id))
+        admin = admin_result.scalar_one_or_none()
+
+        # Generate admin name for display
+        admin_name = None
+        if admin:
+            admin_name = f"{admin.first_name} {admin.last_name}".strip() or admin.email
+
+        # Generate enhanced fields using service methods
+        log_type = AuditLogService.generate_log_type(log.resource_type)
+        activity_description = AuditLogService.generate_activity_description(
+            log.action, log.resource_type, log.details
+        )
+        reference_link = AuditLogService.generate_reference_link(
+            log.resource_type, log.resource_id
+        )
+
+        log_dict = {
+            "id": str(log.id),
+            "admin_id": str(log.admin_id),
+            "action": log.action,
+            "resource_type": log.resource_type,
+            "resource_id": log.resource_id,
+            "details": log.details,
+            "ip_address": log.ip_address,
+            "user_agent": log.user_agent,
+            "created_at": (log.created_at.astimezone(timezone.utc) if log.created_at.tzinfo else log.created_at.replace(tzinfo=timezone.utc)).strftime('%Y-%m-%dT%H:%M:%S.%f+00:00'),
+            "admin_name": admin_name,
+            # New enhanced fields
+            "type": log_type,
+            "activity_description": activity_description,
+            "created_by": admin_name,
+            "reference_link": reference_link,
+            "admin": {
+                "id": str(admin.id),
+                "first_name": admin.first_name,
+                "last_name": admin.last_name,
+                "email": admin.email
+            } if admin else None
+        }
+        logs.append(log_dict)
     
     # Calculate pagination info
     total_pages = (total_count + limit - 1) // limit
@@ -160,6 +206,35 @@ async def get_audit_stats(
     )
     total_logs = total_result.scalar()
     
+    # Get unique admins count
+    unique_admins_result = await db.execute(
+        select(func.count(func.distinct(AuditLog.admin_id))).where(
+            AuditLog.created_at >= start_date
+        )
+    )
+    unique_admins = unique_admins_result.scalar()
+    
+    # Get actions today
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    actions_today_result = await db.execute(
+        select(func.count(AuditLog.id)).where(
+            AuditLog.created_at >= today_start
+        )
+    )
+    actions_today = actions_today_result.scalar()
+    
+    # Get most common action
+    most_common_result = await db.execute(
+        select(
+            AuditLog.action,
+            func.count(AuditLog.id).label('count')
+        ).where(
+            AuditLog.created_at >= start_date
+        ).group_by(AuditLog.action).order_by(func.count(AuditLog.id).desc()).limit(1)
+    )
+    most_common_row = most_common_result.fetchone()
+    most_common_action = most_common_row[0] if most_common_row else "N/A"
+    
     # Get logs by action
     action_result = await db.execute(
         select(
@@ -204,8 +279,11 @@ async def get_audit_stats(
     
     return BaseResponse.success_response(
         data={
-            "period_days": days,
             "total_logs": total_logs,
+            "unique_admins": unique_admins,
+            "actions_today": actions_today,
+            "most_common_action": most_common_action,
+            "period_days": days,
             "actions_breakdown": actions_stats,
             "resource_types_breakdown": resource_stats,
             "most_active_admins": admin_stats

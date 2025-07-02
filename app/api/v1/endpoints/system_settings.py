@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
-from typing import List, Optional, Any
+from sqlalchemy import select
+from typing import List, Optional
 from uuid import UUID
 
-from app.api.deps import get_current_admin, get_super_admin, check_admin_permission
+from app.api.deps import  get_super_admin, check_admin_permission
 from app.db.database import get_db
 from app.models.system_settings import SystemSettings
 from app.schemas.system_settings import (
@@ -13,6 +13,7 @@ from app.schemas.system_settings import (
     SystemSettingsResponse
 )
 from app.schemas.base import BaseResponse, MessageResponse
+from app.services.audit_logger import audit_create
 
 router = APIRouter()
 
@@ -61,8 +62,10 @@ async def get_system_setting(
 
 
 @router.post("/", response_model=BaseResponse[SystemSettingsResponse])
+@audit_create("system_settings")
 async def create_system_setting(
     setting_data: SystemSettingsCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_admin = Depends(get_super_admin)
 ):

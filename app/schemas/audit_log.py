@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Any, Optional
+from typing import Optional
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -23,8 +23,14 @@ class AuditLogResponse(AuditLogBase):
     user_agent: Optional[str] = None
     created_at: datetime
 
+    # New fields for enhanced audit log display
+    type: str = Field(..., description="Log type derived from resource_type")
+    activity_description: str = Field(..., description="Human-readable description of the activity")
+    created_by: str = Field(..., description="Name of the admin who performed the action")
+    reference_link: Optional[str] = Field(None, description="Link to the related resource if applicable")
+
     class Config:
         from_attributes = True
         json_encoders = {
-            datetime: lambda v: v.isoformat() if v.tzinfo else v.replace(tzinfo=timezone.utc).isoformat()
+            datetime: lambda v: (v.astimezone(timezone.utc) if v.tzinfo else v.replace(tzinfo=timezone.utc)).strftime('%Y-%m-%dT%H:%M:%S.%f+00:00')
         }

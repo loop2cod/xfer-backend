@@ -1,5 +1,6 @@
 from sqlalchemy import Column, String, DateTime, Text, JSON, ForeignKey
 from sqlalchemy.sql import func
+from datetime import datetime, timezone
 # from sqlalchemy.orm import relationship
 import uuid
 
@@ -18,7 +19,11 @@ class AuditLog(Base):
     details = Column(JSON, nullable=True)
     ip_address = Column(String(45), nullable=True)  # IPv6 compatible
     user_agent = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        default=lambda: datetime.now(timezone.utc)  # Ensure UTC timezone
+    )
 
     # Relationships
     # admin = relationship("Admin", back_populates="audit_logs")  # Commented out to avoid circular import
