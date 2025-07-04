@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     # Transfer Configuration
     TRANSFER_FEE_PERCENTAGE: float = 0.01  # 1%
     MINIMUM_TRANSFER_AMOUNT: float = 10.00
-    MAXIMUM_TRANSFER_AMOUNT: float = 50000.00
+    MAXIMUM_TRANSFER_AMOUNT: float = 50000000.00
     
     @property
     def parsed_allowed_hosts(self) -> List[str]:
