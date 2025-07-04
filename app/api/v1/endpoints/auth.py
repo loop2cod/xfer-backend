@@ -228,7 +228,7 @@ async def refresh_token(refresh_data: RefreshToken, db: AsyncSession = Depends(g
     
     if user_id is None:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_407_PROXY_AUTHENTICATION_REQUIRED,
             detail="Invalid refresh token"
         )
     
@@ -238,7 +238,7 @@ async def refresh_token(refresh_data: RefreshToken, db: AsyncSession = Depends(g
     
     if not user or not user.is_active:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_407_PROXY_AUTHENTICATION_REQUIRED,
             detail="User not found or inactive"
         )
     
