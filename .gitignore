@@ -5,7 +5,6 @@ __pycache__/
 lib/
 
 # Environments
-.env
 
 # Virtual environment
 venv
@@ -16,3 +15,9 @@ logs/
 # DB
 db/
 xfer.db
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore
+config.bat
+node_modules
